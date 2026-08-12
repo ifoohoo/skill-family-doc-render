@@ -1,0 +1,30 @@
+{
+  "name": "skill-family-doc-render",
+  "version": "0.1.1",
+  "description": "Config-driven GitHub Pages knowledge-site renderer for skill-family projects (multi-repo capable).",
+  "author": "广州市风荷科技有限公司",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22.22.2 <23"
+  },
+  "bin": {
+    "skill-family-doc-render": "bin/skill-family-doc-render.mjs"
+  },
+  "files": [
+    "bin",
+    "scripts",
+    "schemas",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "render:site": "node bin/skill-family-doc-render.mjs",
+    "render:site:check": "node bin/skill-family-doc-render.mjs --check"
+  },
+  "dependencies": {
+    "skill-family-contracts": "0.2.1",
+    "skill-family-harness-node": "0.2.1"
+  }
+}
