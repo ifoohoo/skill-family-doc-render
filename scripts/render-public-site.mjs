@@ -167,16 +167,16 @@ async function renderRepo(root, repo, release, leakLiterals, { check, assertGit 
 
   function navHtml(currentId) {
     const items = ordered
-      .map((p) => `    <a href="${p.id}.html"${p.id === currentId ? ' class="active"' : ''}>${p.title}</a>`)
+      .map((p) => `    <a href="${p.id}.html"${p.id === currentId ? ' class="active" aria-current="page"' : ''}>${p.title}</a>`)
       .join('\n');
-    return `<nav class="toc">\n${items}\n  </nav>`;
+    return `<nav class="toc" aria-label="主要导航">\n${items}\n  </nav>`;
   }
   function pagerHtml(currentId) {
     const idx = pagerPages.findIndex((p) => p.id === currentId);
-    if (idx < 0) return '<nav class="pager"></nav>';
+    if (idx < 0) return '';
     const prev = pagerPages[(idx - 1 + pagerPages.length) % pagerPages.length];
     const next = pagerPages[(idx + 1) % pagerPages.length];
-    return `<nav class="pager">\n    <a href="${prev.id}.html">← ${prev.title}</a>\n    <span class="spacer"></span>\n    <a href="${next.id}.html">${next.title} →</a>\n  </nav>`;
+    return `<nav class="pager" aria-label="教程翻页">\n    <a href="${prev.id}.html">← ${prev.title}</a>\n    <span class="spacer"></span>\n    <a href="${next.id}.html">${next.title} →</a>\n  </nav>`;
   }
   function footerHtml() {
     const owner = release.owner || 'your-org';
