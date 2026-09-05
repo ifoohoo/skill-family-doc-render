@@ -2,15 +2,19 @@
   "$id": "https://github.com/ifoohoo/skill-family-doc-render/schemas/site-baseline.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "site-baseline.json",
-  "description": "站点树基线：closure 集合级 sha256 + 排序后的相对路径列表（排除基线自身）。",
+  "description": "站点树基线：closure 集合级 sha256 + 排序后的相对路径列表（排除基线自身）+ 逐文件 sha256 摘要（--check 用于内存渲染产物逐文件比对）。",
   "type": "object",
   "additionalProperties": false,
-  "required": ["sha256", "files"],
+  "required": ["sha256", "files", "digests"],
   "properties": {
     "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
     "files": {
       "type": "array",
       "items": { "type": "string", "minLength": 1 }
+    },
+    "digests": {
+      "type": "object",
+      "additionalProperties": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
     }
   }
 }
