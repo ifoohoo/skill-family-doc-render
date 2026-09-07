@@ -29,6 +29,8 @@
               "dir": { "type": "string", "minLength": 1 },
               "target": { "type": "string", "minLength": 1 },
               "pages": { "type": "string", "minLength": 1 },
+              "format": { "const": "markdown-v1" },
+              "template": { "const": "editorial" },
               "coverage": {
                 "type": "object",
                 "additionalProperties": false,
@@ -65,6 +67,10 @@
                   "anyOf": [{ "type": "string" }, { "type": "number" }, { "type": "boolean" }]
                 }
               }
+            },
+            "dependentRequired": {
+              "format": ["template"],
+              "template": ["format"]
             }
           }
         }

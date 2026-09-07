@@ -1,5 +1,26 @@
 # 变更日志
 
+## 0.4.0 - 2026-09-07
+
+### 新增
+
+- 增加显式成对的 `site.format: markdown-v1` 与 `site.template: editorial`。受限 Markdown
+  由精确依赖 `marked@18.0.11` 分词，再经过本包的结构、链接和锚点校验；包内模板生成
+  完整 HTML、分组目录、静态搜索、交互与首尾不循环的教程翻页。
+- 增加包内 `editorial` 模板的 CSS、JavaScript 和 SVG 图标。新模式不读取项目自有主题
+  CSS 或 JavaScript，同一冻结输入会产生确定的页面及资源字节。
+- 增加站内 SVG 主动内容检查。脚本、事件属性、`foreignObject`、DTD/实体声明，以及
+  外部或 data 资源会在输出替换前被拒绝；SVG 不内联。
+- 增加只读的 `--check-project --repo <name>`，依次检查输入与公开安全、Markdown 机械
+  合同、覆盖状态、渲染与基线、内部链接和资源，并在失败时输出可复制的恢复提示。
+
+### 安全与兼容
+
+- `site.format` 与 `site.template` 同时缺省时继续使用完整 HTML 注入。该路径只供既有
+  消费者兼容，不获得新主题；新建站点使用 `markdown-v1` 与 `editorial`。
+- `--check-project` 必须与单个 `--repo` 一起使用，不与其他模式组合。全程只读；状态
+  问题返回 1，输入或工具问题返回 2。
+
 ## 0.3.0 - 2026-09-07
 
 ### 新增
