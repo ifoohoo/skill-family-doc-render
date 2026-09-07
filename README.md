@@ -16,21 +16,22 @@ publication APIs. A failure before commit removes staging and leaves the existin
 untouched. After commit, or when publication is indeterminate, staging or displaced data may
 remain for diagnosis; the renderer does not guess or roll back.
 
-> **Version boundary:** this source tree is version `0.4.0`. Verify that exact version in the
-> official npm registry before treating it as installable. Version 0.4.0 adds `markdown-v1`, the
-> `editorial` template, and `--check-project` on top of the 0.3.0 coverage workflow.
+> **Version boundary:** this source tree is version `0.4.1`. Verify that exact version in the
+> official npm registry before treating it as installable. Version 0.4.1 preserves the
+> `markdown-v1`, `editorial`, and `--check-project` behavior introduced in 0.4.0 and aligns the
+> renderer, documentation plugin, and public site at 0.4.1 for the joint release.
 
 ## Install
 
 After confirming availability, install this release with an exact version:
 
 ```sh
-npm install --save-exact skill-family-doc-render@0.4.0
+npm install --save-exact skill-family-doc-render@0.4.1
 ```
 
 Requires Node.js `>=22.22.2 <23` (aligned with the skill-family foundation packages).
 
-Version 0.4.0 has exact runtime dependencies on `marked@18.0.11`,
+Version 0.4.1 has exact runtime dependencies on `marked@18.0.11`,
 `skill-family-contracts@0.18.0`, and `skill-family-harness-node@0.18.0`. `marked` supplies the
 Markdown lexer; the renderer applies its own restricted-format validation before passing semantic
 content to the template. The workspace profile check separately uses
@@ -41,25 +42,25 @@ notes.
 
 ## CLI
 
-Use the exact 0.4.0 CLI for rendering, checks, coverage maintenance, and the Git index assertion:
+Use the exact 0.4.1 CLI for rendering, checks, coverage maintenance, and the Git index assertion:
 
 ```sh
 # render all repos with a site field (writes to disk)
-npx skill-family-doc-render@0.4.0
+npx skill-family-doc-render@0.4.1
 
 # drift check only: compare in-memory render against committed site-baseline.json, write nothing
-npx skill-family-doc-render@0.4.0 --check
+npx skill-family-doc-render@0.4.1 --check
 
 # render / check a single repo by name
-npx skill-family-doc-render@0.4.0 --repo <name>
+npx skill-family-doc-render@0.4.1 --repo <name>
 
 # additionally assert every rendered file is tracked in the git index
-npx skill-family-doc-render@0.4.0 --assert-git
+npx skill-family-doc-render@0.4.1 --assert-git
 
 # inspect or refresh the reviewed product-input snapshot
-npx skill-family-doc-render@0.4.0 --status --repo <name>
-npx skill-family-doc-render@0.4.0 --refresh-coverage --repo <name>
-npx skill-family-doc-render@0.4.0 --check-project --repo <name>
+npx skill-family-doc-render@0.4.1 --status --repo <name>
+npx skill-family-doc-render@0.4.1 --refresh-coverage --repo <name>
+npx skill-family-doc-render@0.4.1 --check-project --repo <name>
 ```
 
 The current directory must be the workspace that owns `public-release.json`. From this package's
@@ -273,7 +274,7 @@ Foundation packages below, it uses exact `marked@18.0.11` for Markdown tokenizat
 Apache-2.0
 
 <!-- release-skill:capability:safe-first-command -->
-> **Start here:** run `npx skill-family-doc-render@0.4.0 --check-project --repo <name>` after
+> **Start here:** run `npx skill-family-doc-render@0.4.1 --check-project --repo <name>` after
 > confirming that exact release in the official registry. From a local checkout, use
 > `node bin/skill-family-doc-render.mjs --check-project --repo <name>`. The check is read-only:
 > it renders in memory, compares against the committed `site-baseline.json`, writes
@@ -297,6 +298,6 @@ Apache-2.0
 Display help and run a read-only project check:
 
 ```sh
-npx skill-family-doc-render@0.4.0 --help
-npx skill-family-doc-render@0.4.0 --check-project --repo <name>
+npx skill-family-doc-render@0.4.1 --help
+npx skill-family-doc-render@0.4.1 --check-project --repo <name>
 ```
