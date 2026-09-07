@@ -1,0 +1,28 @@
+{
+  "$id": "https://github.com/ifoohoo/skill-family-doc-render/schemas/site-coverage-lock.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "site-coverage-lock.json",
+  "description": "知识站已审阅产品输入的最小字节快照；不保存版本、发布状态或人工结论。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["sha256", "inputs"],
+  "properties": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "inputs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "sha256"],
+        "properties": {
+          "path": { "type": "string", "minLength": 1 },
+          "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+        }
+      }
+    },
+    "artifactGraphVersionLockSha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  }
+}

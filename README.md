@@ -13,15 +13,21 @@ publication APIs. A failure before commit removes staging and leaves the existin
 untouched. After commit, or when publication is indeterminate, staging or displaced data may
 remain for diagnosis; the renderer does not guess or roll back.
 
+> **Development status:** this worktree is the unpublished `0.3.0` candidate. The latest npm
+> release is `0.2.1`; it does not contain `site.coverage`, `site.versionSources`, `--status`, or
+> `--refresh-coverage`.
+
 ## Install
 
+Install the current published release with an exact version:
+
 ```sh
-npm install skill-family-doc-render@0.2.0
+npm install --save-exact skill-family-doc-render@0.2.1
 ```
 
 Requires Node.js `>=22.22.2 <23` (aligned with the skill-family foundation packages).
 
-0.2.0 consumes the three Foundation packages at the exact `0.18.0` pin:
+The unpublished 0.3.0 candidate consumes the three Foundation packages at the exact `0.18.0` pin:
 `skill-family-contracts@0.18.0`, `skill-family-harness-node@0.18.0` and
 `skill-family-engineering-kit@0.18.0` (the last one is used by the workspace profile check).
 The 0.2.0 baseline format and exit-code changes are breaking changes; existing 0.1.x users
@@ -30,24 +36,47 @@ notes.
 
 ## CLI
 
+The published 0.2.1 release supports rendering, drift checks, repository selection, and the Git
+index assertion:
+
 ```sh
 # render all repos with a site field (writes to disk)
-npx skill-family-doc-render@0.2.0
+npx skill-family-doc-render@0.2.1
 
 # drift check only: compare in-memory render against committed site-baseline.json, write nothing
-npx skill-family-doc-render@0.2.0 --check
+npx skill-family-doc-render@0.2.1 --check
 
 # render / check a single repo by name
-npx skill-family-doc-render@0.2.0 --repo <name>
+npx skill-family-doc-render@0.2.1 --repo <name>
 
 # additionally assert every rendered file is tracked in the git index
-npx skill-family-doc-render@0.2.0 --assert-git
+npx skill-family-doc-render@0.2.1 --assert-git
+```
+
+Run the unpublished 0.3.0 coverage commands from a local package checkout. The current directory
+must still be the workspace that owns `public-release.json`; adjust the script path when the
+package is nested in a monorepo:
+
+```sh
+# inspect whether reviewed product inputs have changed; writes nothing
+node bin/skill-family-doc-render.mjs --status --repo <name>
+
+# refresh only the reviewed-input snapshot after semantic and style review
+node bin/skill-family-doc-render.mjs --refresh-coverage --repo <name>
+```
+
+After 0.3.0 is published, consumers can install or invoke that exact release:
+
+```sh
+npm install --save-exact skill-family-doc-render@0.3.0
+npx skill-family-doc-render@0.3.0 --status --repo <name>
 ```
 
 Exit codes: `0` success; `1` drift class — `--check` drift, leak-scan hit, `--assert-git`
-missing files, missing/corrupt baseline; `2` configuration class — missing/invalid
-`public-release.json` or `pages.json`, JSON parse failures, unreplaced `@TOKEN@` placeholders,
-invalid `--repo` usage (the message includes the JSON field path). When several repos are
+missing files, missing/corrupt render baseline, or missing/stale coverage snapshot; `2`
+configuration/tool class — missing/invalid `public-release.json` or `pages.json`, JSON parse
+failures, unreplaced `@TOKEN@` placeholders, invalid `--repo` usage, invalid coverage inputs, or
+Git failure (the message includes the JSON field path). When several repos are
 rendered in one run, each repo is isolated: a failure in one does not stop the others, and the
 run ends with a summary of successes/failures plus a non-zero exit (2 if any failure was
 configuration-class, otherwise 1).
@@ -56,7 +85,8 @@ configuration-class, otherwise 1).
 
 The config file lives at the workspace root (resolved from `process.cwd()`). It is validated
 against `schemas/public-release.schema.json` (JSON Schema 2020-12, strict policy) before
-anything runs.
+anything runs. `coverage` and `versionSources` in the example below belong to the unpublished
+0.3.0 candidate.
 
 ```json
 {
@@ -72,6 +102,21 @@ anything runs.
         "dir": "site-src",
         "target": "docs",
         "pages": "pages.json",
+        "coverage": {
+          "lock": "site-coverage-lock.json",
+          "inputs": ["package.json", "src/**", "schemas/**"]
+        },
+        "versionSources": {
+          "@COMPONENT_VERSION@": {
+            "source": "package.json",
+            "pointer": "/version"
+          },
+          "@COMPONENT_TAG@": {
+            "source": "package.json",
+            "pointer": "/version",
+            "prefix": "component-v"
+          }
+        },
         "tokens": { "@CUSTOM_NOTE@": "any static placeholder" }
       }
     }
@@ -88,6 +133,13 @@ anything runs.
   `inPager: false` excludes a page from the prev/next pager. Page `id` is restricted to
   `[A-Za-z0-9][A-Za-z0-9_-]*`.
 - `forbiddenPublicPaths` / `privateLiterals` append project-specific literals to the leak scan.
+- `site.coverage` declares reviewed product inputs relative to `repo.source`. Each input accepts
+  `*` and `**` glob syntax and must match at least one file after the coverage lock itself is
+  excluded.
+- `site.versionSources` maps a token to an existing JSON file and an
+  [RFC 6901 JSON Pointer](https://www.rfc-editor.org/rfc/rfc6901). `prefix` and `suffix` format
+  the scalar value without copying the version into configuration. Every referenced JSON file
+  automatically joins the coverage inputs.
 
 ## Placeholders
 
@@ -103,13 +155,37 @@ Version tokens are derived automatically from the repo's `package.json` version 
 - `@{NAME}_TAG@` — e.g. `my-project` → `@MY_PROJECT_TAG@` = `tagPrefix` + version
 - `@{NAME}_VERSION@` — the bare version
 
-`site.tokens` adds arbitrary static placeholder replacements on top. If a rendered page still
+`site.tokens` adds non-version static placeholder replacements. A token also declared in
+`site.versionSources` always takes its value from the JSON source. If a rendered page still
 contains an unreplaced `@TOKEN@` (`@[A-Z0-9_]+@`), the run fails fast (exit 2) naming the
 tokens and the file — placeholder typos never slip into the published site silently.
 
 If a repo has no `package.json` (or no valid `version`), the version falls back to `0.0.0`
 with a loud `WARNING` on stderr, because that fallback is baked into the output and the
 baseline; a malformed `package.json` fails fast (exit 2).
+
+## Coverage status
+
+`--refresh-coverage --repo <name>` expands `site.coverage.inputs`, adds every configured version
+source, computes the file digests and closure digest, then atomically writes the declared coverage
+lock. It does not render the site or modify Git. The lock contains only:
+
+- `sha256`: the Foundation resource-closure digest;
+- `inputs`: sorted relative file paths and their byte digests;
+- `artifactGraphVersionLockSha256`: the current `artifacts/traceability-version-lock.json`
+  digest when the repository contains `artifact-graph.config.yaml`.
+
+`--status --repo <name>` recomputes the same facts without writing. It prints the last commit that
+changed the coverage lock, the current and recorded closure digests, changed covered files,
+current values from `site.versionSources`, and suggested `git diff` commands. A matching snapshot
+returns `0`; a missing or stale snapshot returns `1`. A site without `coverage`, a path escape, an
+empty glob, an invalid JSON pointer, a symlink escape, or a Git failure returns `2`.
+
+Coverage paths are relative to `repo.source`. Absolute paths, lexical traversal, realpath escape,
+and symlink escape are rejected through Foundation path containment. The coverage lock is always
+excluded from its own inputs, avoiding a digest cycle. `--status` requires a Git repository with a
+resolvable `HEAD`, because its report includes committed, staged, unstaged, and covered untracked
+changes.
 
 ## Leak scan
 
@@ -151,30 +227,35 @@ dependencies:
 - [`skill-family-harness-node`](https://github.com/ifoohoo/skill-family-harness-node) — all file
   reads go through `resolveContained` / `readFileContained` (path traversal, symlink and realpath
   escapes rejected), per-file digests use `digestBytes`, the tree baseline is computed with
-  `computeResourceClosure`. Output is staged in a sibling directory under the target's canonical
-  parent, with contained writes through `writeFileAtomic`. A new target uses
+  `computeResourceClosure`, and coverage locks use `writeFileAtomic`. Output is staged in a
+  sibling directory under the target's canonical parent, with contained writes through
+  `writeFileAtomic`. A new target uses
   `createFixedSetPublicationManifest` followed by `publishFixedSet`; an existing target uses
   `replaceFixedSetAtomic`. Staging is removed after success or a clearly pre-commit failure;
   post-commit or indeterminate failures may retain it for diagnosis. These APIs do not add a
   broader atomicity guarantee than Foundation provides.
 - [`skill-family-contracts`](https://github.com/ifoohoo/skill-family-contracts) —
   `validateDocument` (JSON Schema 2020-12, strict policy) validates `public-release.json`,
-  `pages.json` and `site-baseline.json`; validation failure aborts with exit code 2.
+  `pages.json`, `site-baseline.json`, and `site-coverage-lock.json`; validation failure aborts
+  with exit code 2.
 
 ## License
 
 Apache-2.0
 
 <!-- release-skill:capability:safe-first-command -->
-> **Start here:** after installing the exact `skill-family-doc-render@0.2.0`, run
-> `./node_modules/.bin/skill-family-doc-render --check` — the drift check is read-only:
+> **Start here:** for the unpublished 0.3.0 candidate, run
+> `node bin/skill-family-doc-render.mjs --check` from its local checkout. Published 0.2.1 users
+> can run `./node_modules/.bin/skill-family-doc-render --check`. The drift check is read-only:
 > it renders in memory, compares against the committed `site-baseline.json`, writes
 > nothing and touches no network or credentials. The CLI performs no Git writes; only an
 > explicit `--assert-git` performs a read-only query of the Git index.
 
 <!-- release-skill:capability:external-write-boundary -->
-> **External write boundary:** this CLI writes the declared target and a controlled sibling
-> staging directory, both within the target's canonical parent, with contained path checks.
+> **External write boundary:** rendering writes the declared target and a controlled sibling
+> staging directory, both within the target's canonical parent, with contained path checks. An
+> explicit `--refresh-coverage` writes only the declared coverage lock through an atomic file
+> replacement. `--status` and `--check` write nothing.
 > Render, scan, baseline and `--assert-git` preflight failures happen before target changes.
 > Staging is removed after success or a clearly pre-commit failure; post-commit or
 > indeterminate failures may retain it to preserve diagnosable state.
@@ -184,7 +265,12 @@ Apache-2.0
 
 ## Minimal example
 
+Use the local checkout while 0.3.0 remains unpublished:
+
 ```sh
-npx skill-family-doc-render@0.2.0 --help     # show usage
-npx skill-family-doc-render@0.2.0 --check    # read-only drift check — the safe first command
+node bin/skill-family-doc-render.mjs --help
+node bin/skill-family-doc-render.mjs --check
 ```
+
+Replace `node bin/skill-family-doc-render.mjs` with `npx skill-family-doc-render@0.3.0` only after
+the registry publishes 0.3.0.

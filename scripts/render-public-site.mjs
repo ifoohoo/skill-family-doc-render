@@ -14,23 +14,24 @@
 // harness 化：所有配置 / 源文件读取经 readFileContained，staging 的相对输出经
 // writeFileAtomic 收容并原子写入（见 skill-family-harness-node）；树基线摘要用
 // computeResourceClosure，逐文件摘要用 digestBytes。
-// 配置、pages.json 与基线文件先经 skill-family-contracts validateDocument
+// 配置、pages.json、渲染基线与覆盖快照先经 skill-family-contracts validateDocument
 // （JSON Schema 2020-12，strict 策略）校验，校验失败 fail-fast。
 //
 // 错误分类（退出码语义）：
-//   exit 1 — 漂移类：--check 检出漂移、泄漏扫描命中、--assert-git 缺失、
-//            基线缺失 / 基线 JSON 损坏；
-//   exit 2 — 配置类：public-release.json / pages.json 缺失、非法或 JSON 解析失败、
-//            package.json JSON 解析失败、@TOKEN@ 占位符残留、--repo 参数无效；
+//   exit 1 — 漂移类：--check 检出漂移、覆盖快照缺失或落后、泄漏扫描命中、
+//            --assert-git 缺失、渲染基线缺失 / 基线 JSON 损坏；
+//   exit 2 — 配置或工具类：配置 / JSON / 覆盖输入非法、Git 调用失败、
+//            @TOKEN@ 占位符残留、--repo 参数无效；
 //   其余意外异常（HarnessError 等）原样抛出，CLI 归为 exit 1。
 //   可预期失败统一封装为 RenderError 携带 exitCode。
 import { existsSync, readFileSync } from 'node:fs';
-import { readdir, rm, mkdtemp, realpath } from 'node:fs/promises';
-import { resolve, relative, extname, join, dirname, basename } from 'node:path';
+import { readdir, rm, mkdtemp, realpath, stat, glob } from 'node:fs/promises';
+import { resolve, relative, extname, join, dirname, basename, posix } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import {
   resolveContained,
+  classifyPathInput,
   readFileContained,
   digestBytes,
   computeResourceClosure,
@@ -51,14 +52,17 @@ const publicReleaseSchema = JSON.parse(
 const siteBaselineSchema = JSON.parse(
   readFileSync(join(__dirname, '..', 'schemas', 'site-baseline.schema.json'), 'utf8'),
 );
+const siteCoverageLockSchema = JSON.parse(
+  readFileSync(join(__dirname, '..', 'schemas', 'site-coverage-lock.schema.json'), 'utf8'),
+);
 const pagesSchema = JSON.parse(
   readFileSync(join(__dirname, '..', 'schemas', 'pages.schema.json'), 'utf8'),
 );
 
 // 可预期失败（配置缺失、校验失败、check 漂移、泄漏命中等）以此类型抛出，携带退出码。
 export class RenderError extends Error {
-  constructor(message, exitCode = 2) {
-    super(message);
+  constructor(message, exitCode = 2, cause) {
+    super(message, cause === undefined ? undefined : { cause });
     this.exitCode = exitCode;
   }
 }
@@ -103,6 +107,301 @@ async function pkgVersion(root, source, name) {
     return fallback(`${pkgRel} 缺少有效 version 字段`);
   }
   return doc.version;
+}
+
+function configError(name, message, cause) {
+  return new RenderError(`[render-public-site] ${name}: ${message}`, 2, cause);
+}
+
+async function repoSourceRoot(root, repo) {
+  const classification = classifyPathInput(repo.source);
+  if (!classification.ok) {
+    throw configError(repo.name, `repo.source 非法 (${classification.kind}): ${repo.source}`);
+  }
+  if (resolve(root, repo.source) === root) return root;
+  try {
+    return await resolveContained(root, repo.source);
+  } catch (cause) {
+    throw configError(repo.name, `repo.source 未收容于工作区: ${repo.source}`, cause);
+  }
+}
+
+async function containedOrConfig(root, relPath, repoName, fieldPath) {
+  try {
+    return await resolveContained(root, relPath);
+  } catch (cause) {
+    throw configError(repoName, `${fieldPath} 必须是收容于 repo.source 的相对路径: ${relPath}`, cause);
+  }
+}
+
+function jsonPointerValue(document, pointer, repoName, fieldPath) {
+  const segments = pointer.slice(1).split('/').map((segment) => {
+    if (/~(?:[^01]|$)/.test(segment)) {
+      throw configError(repoName, `${fieldPath} 不是有效 JSON Pointer: ${pointer}`);
+    }
+    return segment.replaceAll('~1', '/').replaceAll('~0', '~');
+  });
+  let value = document;
+  for (const segment of segments) {
+    if (value === null || typeof value !== 'object' || !Object.hasOwn(value, segment)) {
+      throw configError(repoName, `${fieldPath} 指向的字段不存在: ${pointer}`);
+    }
+    value = value[segment];
+  }
+  if (!['string', 'number', 'boolean'].includes(typeof value)) {
+    throw configError(repoName, `${fieldPath} 必须指向 string、number 或 boolean: ${pointer}`);
+  }
+  return value;
+}
+
+async function loadVersionSources(sourceRoot, repo) {
+  const definitions = repo.site.versionSources || {};
+  const cache = new Map();
+  const tokens = {};
+  const values = [];
+  const paths = new Set();
+  for (const [token, definition] of Object.entries(definitions)) {
+    const fieldPath = `site.versionSources.${token}`;
+    const sourceAbs = await containedOrConfig(sourceRoot, definition.source, repo.name, `${fieldPath}.source`);
+    let sourceStats;
+    try {
+      sourceStats = await stat(sourceAbs);
+    } catch (cause) {
+      throw configError(repo.name, `${fieldPath}.source 不可读取: ${definition.source}`, cause);
+    }
+    if (!sourceStats.isFile()) {
+      throw configError(repo.name, `${fieldPath}.source 必须指向 JSON 文件: ${definition.source}`);
+    }
+    let document = cache.get(definition.source);
+    if (document === undefined) {
+      try {
+        document = JSON.parse(await readFileContained(sourceRoot, definition.source, { encoding: 'utf8' }));
+      } catch (cause) {
+        if (cause instanceof SyntaxError) {
+          throw configError(repo.name, `${fieldPath}.source JSON 解析失败: ${definition.source}: ${cause.message}`, cause);
+        }
+        throw configError(repo.name, `${fieldPath}.source 读取失败: ${definition.source}`, cause);
+      }
+      cache.set(definition.source, document);
+    }
+    const rawValue = jsonPointerValue(document, definition.pointer, repo.name, `${fieldPath}.pointer`);
+    const renderedValue = `${definition.prefix || ''}${rawValue}${definition.suffix || ''}`;
+    tokens[token] = renderedValue;
+    values.push({ token, source: definition.source, pointer: definition.pointer, value: rawValue, renderedValue });
+    paths.add(posix.normalize(definition.source.replaceAll('\\', '/')));
+  }
+  return { tokens, values, paths: [...paths].sort() };
+}
+
+async function artifactGraphLockDigest(sourceRoot, repo) {
+  const configPath = 'artifact-graph.config.yaml';
+  const lockPath = 'artifacts/traceability-version-lock.json';
+  const configAbs = await containedOrConfig(sourceRoot, configPath, repo.name, 'artifact-graph config');
+  if (!existsSync(configAbs)) return undefined;
+  const lockAbs = await containedOrConfig(sourceRoot, lockPath, repo.name, 'artifact-graph version lock');
+  if (!existsSync(lockAbs)) {
+    throw configError(repo.name, `已启用 artifact-graph，但未找到 ${lockPath}`);
+  }
+  try {
+    return digestBytes(await readFileContained(sourceRoot, lockPath));
+  } catch (cause) {
+    throw configError(repo.name, `${lockPath} 读取失败`, cause);
+  }
+}
+
+async function computeCoverageSnapshot(sourceRoot, repo) {
+  const coverage = repo.site.coverage;
+  if (!coverage) throw configError(repo.name, 'site.coverage 未配置');
+  const lockPath = posix.normalize(coverage.lock.replaceAll('\\', '/'));
+  await containedOrConfig(sourceRoot, coverage.lock, repo.name, 'site.coverage.lock');
+  const versionSources = await loadVersionSources(sourceRoot, repo);
+  if (versionSources.paths.includes(lockPath)) {
+    throw configError(repo.name, 'site.coverage.lock 不能同时作为版本源');
+  }
+
+  const files = new Set();
+  for (const [index, pattern] of coverage.inputs.entries()) {
+    const fieldPath = `site.coverage.inputs[${index}]`;
+    if (pattern.split('/').includes('..')) {
+      throw configError(repo.name, `${fieldPath} 不能包含 .. 路径段: ${pattern}`);
+    }
+    // 首版只接受 * / **，避免 brace、extglob 或字符类先展开再越过收容检查。
+    if (/[?\[\]{}()!]/.test(pattern)) {
+      throw configError(repo.name, `${fieldPath} 只支持 * 与 ** 通配符: ${pattern}`);
+    }
+    await containedOrConfig(sourceRoot, pattern.replaceAll('*', '__coverage_glob__'), repo.name, fieldPath);
+    const matches = [];
+    try {
+      for await (const candidate of glob(pattern, { cwd: sourceRoot })) {
+        const normalized = posix.normalize(candidate.replaceAll('\\', '/'));
+        if (normalized === '.' || normalized === lockPath) continue;
+        const candidateAbs = await containedOrConfig(
+          sourceRoot,
+          normalized,
+          repo.name,
+          fieldPath,
+        );
+        const candidateStats = await stat(candidateAbs);
+        if (candidateStats.isFile()) matches.push(normalized);
+      }
+    } catch (cause) {
+      if (cause instanceof RenderError) throw cause;
+      throw configError(repo.name, `${fieldPath} 无法展开: ${pattern}`, cause);
+    }
+    if (!matches.length) {
+      throw configError(repo.name, `${fieldPath} 没有匹配任何输入文件: ${pattern}`);
+    }
+    for (const match of matches) files.add(match);
+  }
+  for (const versionPath of versionSources.paths) {
+    await containedOrConfig(sourceRoot, versionPath, repo.name, 'site.versionSources.source');
+    files.add(versionPath);
+  }
+
+  let closure;
+  try {
+    closure = await computeResourceClosure({
+      root: sourceRoot,
+      resources: [...files].sort().map((path) => ({ path, role: 'input' })),
+    });
+  } catch (cause) {
+    throw configError(repo.name, '覆盖输入摘要计算失败', cause);
+  }
+  const snapshot = {
+    sha256: closure.digest,
+    inputs: closure.resources.map(({ path, sha256 }) => ({ path, sha256 })),
+  };
+  const versionLockSha256 = await artifactGraphLockDigest(sourceRoot, repo);
+  if (versionLockSha256 !== undefined) {
+    snapshot.artifactGraphVersionLockSha256 = versionLockSha256;
+  }
+  assertValid(snapshot, siteCoverageLockSchema, `${repo.name} site-coverage-lock.json`);
+  return { snapshot, versionSources };
+}
+
+function git(root, args, repoName) {
+  try {
+    return execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  } catch (cause) {
+    const detail = String(cause.stderr || cause.message).trim();
+    throw configError(repoName, `Git 命令失败: git ${args.join(' ')}${detail ? `: ${detail}` : ''}`, cause);
+  }
+}
+
+function splitLines(text) {
+  return text ? text.split(/\r?\n/).filter(Boolean) : [];
+}
+
+function shellQuote(value) {
+  return `'${String(value).replaceAll("'", "'\\''")}'`;
+}
+
+function coverageGitStatus(sourceRoot, repo, snapshot, baseline) {
+  const gitRoot = git(sourceRoot, ['rev-parse', '--show-toplevel'], repo.name);
+  const head = git(sourceRoot, ['rev-parse', 'HEAD'], repo.name);
+  const lockAbs = resolve(sourceRoot, repo.site.coverage.lock);
+  const lockGitPath = relative(gitRoot, lockAbs).replaceAll('\\', '/');
+  const coverageCommit = git(sourceRoot, ['log', '-1', '--format=%H', '--', lockGitPath], repo.name) || null;
+  const sourceGitPath = relative(gitRoot, sourceRoot).replaceAll('\\', '/') || '.';
+  const knownInputs = new Set([...(baseline?.inputs || []), ...snapshot.inputs].map((entry) => {
+    return relative(gitRoot, resolve(sourceRoot, entry.path)).replaceAll('\\', '/');
+  }));
+  if (snapshot.artifactGraphVersionLockSha256 || baseline?.artifactGraphVersionLockSha256) {
+    knownInputs.add(
+      relative(gitRoot, resolve(sourceRoot, 'artifacts/traceability-version-lock.json')).replaceAll('\\', '/'),
+    );
+  }
+  const changed = new Set();
+  const collect = (lines) => {
+    for (const path of lines) if (knownInputs.has(path)) changed.add(path);
+  };
+  if (coverageCommit) {
+    collect(splitLines(git(sourceRoot, ['diff', '--name-only', '--no-renames', `${coverageCommit}..${head}`], repo.name)));
+  } else {
+    for (const path of knownInputs) changed.add(path);
+  }
+  collect(splitLines(git(sourceRoot, ['diff', '--cached', '--name-only', '--no-renames'], repo.name)));
+  collect(splitLines(git(sourceRoot, ['diff', '--name-only', '--no-renames'], repo.name)));
+  collect(splitLines(git(sourceRoot, ['ls-files', '--others', '--exclude-standard'], repo.name)));
+
+  const suggestions = coverageCommit
+    ? [
+        `git diff ${coverageCommit}..HEAD -- ${shellQuote(sourceGitPath)}`,
+        `git diff --cached -- ${shellQuote(sourceGitPath)}`,
+        `git diff -- ${shellQuote(sourceGitPath)}`,
+      ]
+    : [
+        `git status --short -- ${shellQuote(sourceGitPath)}`,
+        `git diff HEAD -- ${shellQuote(sourceGitPath)}`,
+      ];
+  return { coverageCommit, changed: [...changed].sort(), suggestions };
+}
+
+async function readCoverageBaseline(sourceRoot, repo) {
+  const lockPath = repo.site.coverage.lock;
+  const lockAbs = await containedOrConfig(sourceRoot, lockPath, repo.name, 'site.coverage.lock');
+  if (!existsSync(lockAbs)) return null;
+  let baseline;
+  try {
+    baseline = JSON.parse(await readFileContained(sourceRoot, lockPath, { encoding: 'utf8' }));
+  } catch (cause) {
+    throw configError(repo.name, `覆盖快照 JSON 解析失败: ${lockPath}: ${cause.message}`, cause);
+  }
+  assertValid(baseline, siteCoverageLockSchema, `${repo.name} site-coverage-lock.json`);
+  return baseline;
+}
+
+async function refreshCoverageLock(root, repo) {
+  const sourceRoot = await repoSourceRoot(root, repo);
+  // 已存在的写入目标必须已经是覆盖快照，避免错误配置把普通项目文件当作锁覆盖。
+  await readCoverageBaseline(sourceRoot, repo);
+  const { snapshot } = await computeCoverageSnapshot(sourceRoot, repo);
+  try {
+    await writeFileAtomic(sourceRoot, repo.site.coverage.lock, `${JSON.stringify(snapshot, null, 2)}\n`);
+  } catch (cause) {
+    throw configError(repo.name, `覆盖快照写入失败: ${repo.site.coverage.lock}`, cause);
+  }
+  console.log(`[render-public-site --refresh-coverage] ${repo.name}: 已写入 ${repo.site.coverage.lock}`);
+  console.log(`[render-public-site --refresh-coverage] ${repo.name}: coverage-sha256=${snapshot.sha256}`);
+}
+
+async function reportCoverageStatus(root, repo) {
+  if (!repo.site.coverage) throw configError(repo.name, 'site.coverage 未配置');
+  const sourceRoot = await repoSourceRoot(root, repo);
+  const baseline = await readCoverageBaseline(sourceRoot, repo);
+  const { snapshot, versionSources } = await computeCoverageSnapshot(sourceRoot, repo);
+  const gitStatus = coverageGitStatus(sourceRoot, repo, snapshot, baseline);
+  const consistent = baseline !== null
+    && baseline.sha256 === snapshot.sha256
+    && JSON.stringify(baseline.inputs) === JSON.stringify(snapshot.inputs)
+    && baseline.artifactGraphVersionLockSha256 === snapshot.artifactGraphVersionLockSha256;
+  const state = baseline === null ? '缺失' : consistent ? '一致' : '落后';
+  console.log(`[render-public-site --status] ${repo.name}: ${state}`);
+  console.log(`  覆盖提交: ${gitStatus.coverageCommit || '（覆盖快照尚未提交）'}`);
+  console.log(`  当前输入摘要: ${snapshot.sha256}`);
+  console.log(`  快照输入摘要: ${baseline?.sha256 || '（缺失）'}`);
+  if (snapshot.artifactGraphVersionLockSha256 !== undefined) {
+    console.log(`  artifact-graph 版本锁摘要: ${snapshot.artifactGraphVersionLockSha256}`);
+  }
+  console.log('  变化文件:');
+  if (gitStatus.changed.length) {
+    for (const path of gitStatus.changed) console.log(`    - ${path}`);
+  } else {
+    console.log('    - （无）');
+  }
+  console.log('  版本源当前值:');
+  if (versionSources.values.length) {
+    for (const item of versionSources.values) {
+      console.log(`    - ${item.token}=${item.renderedValue} (${item.source}#${item.pointer})`);
+    }
+  } else {
+    console.log('    - （未配置）');
+  }
+  console.log('  建议 git diff:');
+  for (const command of gitStatus.suggestions) console.log(`    ${command}`);
+  if (!consistent) {
+    throw new RenderError(`[render-public-site --status] ${repo.name}: 覆盖快照${baseline === null ? '缺失' : '落后'}`, 1);
+  }
 }
 
 // --- 树摘要（基于 computeResourceClosure，排除 site-baseline.json 自身，防 hash 循环） ---
@@ -183,13 +482,15 @@ async function renderRepo(root, repo, release, leakLiterals, { check, assertGit 
     return `<footer class="site">\n  <div>© ${owner} · <a href="https://www.apache.org/licenses/LICENSE-2.0" rel="noopener noreferrer">Apache-2.0</a></div>\n  <div class="generated">generated by skill-family-doc-render</div>\n</footer>`;
   }
 
-  // 版本占位符：按 repo 名自动派生（@{NAME}_TAG@ / @{NAME}_VERSION@）+ site.tokens 静态补充
+  // 版本占位符：保留按 repo 名自动派生的兼容 token；显式 JSON 版本源最后覆盖静态 token。
   const version = await pkgVersion(root, repo.source, repo.name);
+  const versionSources = await loadVersionSources(sourceAbs, repo);
   const tn = tokenName(repo.name);
   const tokens = {
     [`@${tn}_TAG@`]: (repo.tagPrefix || `${repo.name}-v`) + version,
     [`@${tn}_VERSION@`]: version,
     ...(site.tokens || {}),
+    ...versionSources.tokens,
   };
   function replaceTokens(s) {
     let out = s;
@@ -353,7 +654,8 @@ async function renderRepo(root, repo, release, leakLiterals, { check, assertGit 
 }
 
 // === 主流程 ===
-// 闭集参数解析：允许参数只有 --check / --assert-git / --repo <name> / --help / -h。
+// 闭集参数解析：允许参数只有 --check / --assert-git / --status /
+// --refresh-coverage / --repo <name> / --help / -h。
 // 未知选项、游离位置参数、重复取值参数、--repo 缺值或值本身是另一个选项，
 // 均以 RenderError（exit 2）失败，错误信息指出具体参数。不引入 CLI 框架。
 // --help / -h 由 main() 统一呈现：闭集解析先于配置读取与写盘，打印 USAGE_TEXT 后退出 0。
@@ -364,11 +666,22 @@ Usage:
   skill-family-doc-render --check        read-only drift check against site-baseline.json
   skill-family-doc-render --repo <name>  render / check a single repo by name
   skill-family-doc-render --assert-git   also assert rendered files are git-tracked
+  skill-family-doc-render --status --repo <name>
+                                        read-only coverage status and Git changes
+  skill-family-doc-render --refresh-coverage --repo <name>
+                                        refresh only site-coverage-lock.json
 
 Reads public-release.json from the current working directory.`;
 
 function parseArgs(argv) {
-  const flags = { check: false, assertGit: false, repoArg: null, help: false };
+  const flags = {
+    check: false,
+    assertGit: false,
+    status: false,
+    refreshCoverage: false,
+    repoArg: null,
+    help: false,
+  };
   let i = 0;
   while (i < argv.length) {
     const arg = argv[i];
@@ -376,6 +689,10 @@ function parseArgs(argv) {
       flags.check = true;
     } else if (arg === '--assert-git') {
       flags.assertGit = true;
+    } else if (arg === '--status') {
+      flags.status = true;
+    } else if (arg === '--refresh-coverage') {
+      flags.refreshCoverage = true;
     } else if (arg === '--help' || arg === '-h') {
       flags.help = true;
     } else if (arg === '--repo') {
@@ -395,6 +712,15 @@ function parseArgs(argv) {
     }
     i += 1;
   }
+  if (flags.status && flags.refreshCoverage) {
+    throw new RenderError('[render-public-site] 参数错误: --status 与 --refresh-coverage 不能同时使用', 2);
+  }
+  if ((flags.status || flags.refreshCoverage) && (flags.check || flags.assertGit)) {
+    throw new RenderError('[render-public-site] 参数错误: 覆盖命令不能与 --check 或 --assert-git 组合', 2);
+  }
+  if ((flags.status || flags.refreshCoverage) && flags.repoArg === null) {
+    throw new RenderError('[render-public-site] 参数错误: --status 与 --refresh-coverage 必须配合 --repo <name>', 2);
+  }
   return flags;
 }
 
@@ -404,7 +730,7 @@ function parseArgs(argv) {
 // 单个 repo 内部（含泄漏扫描命中）保持 fail-fast。
 export async function main(argv = process.argv.slice(2), { cwd = process.cwd() } = {}) {
   // 闭集解析在读取任何配置或写盘之前完成；参数失败时目标树一个字节都不动。
-  const { check, assertGit, repoArg, help } = parseArgs(argv);
+  const { check, assertGit, status, refreshCoverage, repoArg, help } = parseArgs(argv);
   if (help) {
     console.log(USAGE_TEXT);
     return 0;
@@ -442,13 +768,15 @@ export async function main(argv = process.argv.slice(2), { cwd = process.cwd() }
   const results = [];
   for (const repo of selected) {
     try {
-      await renderRepo(root, repo, release, leakLiterals, { check, assertGit });
+      if (status) await reportCoverageStatus(root, repo);
+      else if (refreshCoverage) await refreshCoverageLock(root, repo);
+      else await renderRepo(root, repo, release, leakLiterals, { check, assertGit });
       results.push({ name: repo.name, ok: true });
     } catch (err) {
       results.push({
         name: repo.name,
         ok: false,
-        exitCode: err instanceof RenderError ? err.exitCode : 1,
+        exitCode: Number.isInteger(err?.exitCode) ? err.exitCode : 1,
         message: err.message,
         cause: err,
       });

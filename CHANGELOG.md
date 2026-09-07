@@ -1,5 +1,26 @@
 # 变更日志
 
+## 0.3.0 - 2026-09-07
+
+### 新增
+
+- 增加 `site.coverage` 和最小 `site-coverage-lock.json`，记录已审阅产品输入的文件摘要、
+  聚合摘要，以及启用 artifact-graph 时的版本锁摘要。
+- 增加只读的 `--status --repo <name>` 和只更新覆盖快照的
+  `--refresh-coverage --repo <name>`。状态命令会报告覆盖提交、当前摘要、变化文件、
+  权威版本值和建议执行的 Git diff 命令。
+- 状态命令从 `repo.source` 发现所属 Git 仓库。目标位于外层工作区中的独立内层仓库时，
+  覆盖提交、变化路径和 diff 建议只使用内层仓库历史。
+- 增加 `site.versionSources`。渲染器从收容于 `repo.source` 的 JSON 文件和 JSON Pointer
+  读取版本值，版本源文件自动加入覆盖输入。
+
+### 安全与兼容
+
+- 覆盖输入拒绝绝对路径、越界路径、空匹配和符号链接逃逸；覆盖锁始终排除自身，
+  避免形成摘要循环。
+- 保留现有静态 token 和按仓库名派生版本 token 的兼容行为；同名
+  `site.versionSources` 取值优先。
+
 ## 0.2.1 - 2026-09-06
 
 ### 变更
