@@ -16,22 +16,22 @@ publication APIs. A failure before commit removes staging and leaves the existin
 untouched. After commit, or when publication is indeterminate, staging or displaced data may
 remain for diagnosis; the renderer does not guess or roll back.
 
-> **Version boundary:** this source tree is version `0.4.4`. Verify that exact version in the
-> official npm registry before treating it as installable. Version 0.4.4 preserves the
+> **Version boundary:** this source tree is version `0.4.5`. Verify that exact version in the
+> official npm registry before treating it as installable. Version 0.4.5 preserves the
 > `markdown-v1`, `editorial`, and `--check-project` behavior introduced in 0.4.0 and aligns the
-> renderer, documentation plugin, and public site at 0.4.4 for the joint release.
+> renderer, documentation plugin, and public site at 0.4.5 for the joint release.
 
 ## Install
 
 After confirming availability, install this release with an exact version:
 
 ```sh
-npm install --save-exact skill-family-doc-render@0.4.4
+npm install --save-exact skill-family-doc-render@0.4.5
 ```
 
 Requires Node.js `>=22.22.2 <23` (aligned with the skill-family foundation packages).
 
-Version 0.4.4 has exact runtime dependencies on `marked@18.0.11`,
+Version 0.4.5 has exact runtime dependencies on `marked@18.0.11`,
 `skill-family-contracts@0.19.3`, and `skill-family-harness-node@0.19.3`. `marked` supplies the
 Markdown lexer; the renderer applies its own restricted-format validation before passing semantic
 content to the template. The workspace profile check separately uses
@@ -42,28 +42,28 @@ notes.
 
 ## CLI
 
-Use the exact 0.4.4 CLI for rendering, checks, coverage maintenance, and the Git index assertion:
+Use the exact 0.4.5 CLI for rendering, checks, coverage maintenance, and the Git index assertion:
 
 ```sh
 # render all repos with a site field (writes to disk)
-npx skill-family-doc-render@0.4.4
+npx skill-family-doc-render@0.4.5
 
 # drift check only: compare in-memory render against the on-disk site-baseline.json, write nothing
-npx skill-family-doc-render@0.4.4 --check
+npx skill-family-doc-render@0.4.5 --check
 
 # render / check a single repo by name
-npx skill-family-doc-render@0.4.4 --repo <name>
+npx skill-family-doc-render@0.4.5 --repo <name>
 
 # assert every rendered file is tracked in the Git index, then render
-npx skill-family-doc-render@0.4.4 --assert-git
+npx skill-family-doc-render@0.4.5 --assert-git
 
 # run both the drift and Git index tracking checks without writing
-npx skill-family-doc-render@0.4.4 --check --assert-git
+npx skill-family-doc-render@0.4.5 --check --assert-git
 
 # inspect or refresh the reviewed product-input snapshot
-npx skill-family-doc-render@0.4.4 --status --repo <name>
-npx skill-family-doc-render@0.4.4 --refresh-coverage --repo <name>
-npx skill-family-doc-render@0.4.4 --check-project --repo <name>
+npx skill-family-doc-render@0.4.5 --status --repo <name>
+npx skill-family-doc-render@0.4.5 --refresh-coverage --repo <name>
+npx skill-family-doc-render@0.4.5 --check-project --repo <name>
 ```
 
 The current directory must be the workspace that owns `public-release.json`. From this package's
@@ -283,7 +283,7 @@ Foundation packages below, it uses exact `marked@18.0.11` for Markdown tokenizat
 Apache-2.0
 
 <!-- release-skill:capability:safe-first-command -->
-> **Start here:** run `npx skill-family-doc-render@0.4.4 --check-project --repo <name>` after
+> **Start here:** run `npx skill-family-doc-render@0.4.5 --check-project --repo <name>` after
 > confirming that exact release in the official registry. From a local checkout, use
 > `node bin/skill-family-doc-render.mjs --check-project --repo <name>`. The check is read-only:
 > it renders in memory, compares against the on-disk `site-baseline.json`, writes
@@ -307,6 +307,6 @@ Apache-2.0
 Display help and run a read-only project check:
 
 ```sh
-npx skill-family-doc-render@0.4.4 --help
-npx skill-family-doc-render@0.4.4 --check-project --repo <name>
+npx skill-family-doc-render@0.4.5 --help
+npx skill-family-doc-render@0.4.5 --check-project --repo <name>
 ```
