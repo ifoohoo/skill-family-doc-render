@@ -20,7 +20,7 @@
 //
 // 错误分类（退出码语义）：
 //   exit 1 — 漂移类：--check 检出漂移、覆盖快照缺失或落后、泄漏扫描命中、
-//            --assert-git 缺失、渲染基线缺失 / 基线 JSON 损坏；
+//            --assert-git 检出未跟踪文件、渲染基线缺失 / 基线 JSON 损坏；
 //   exit 2 — 配置或工具类：配置 / JSON / 覆盖输入非法、Git 调用失败、
 //            @TOKEN@ 占位符残留、markdown-v1/SVG 输入非法、--repo 参数无效；
 //   其余意外异常（HarnessError 等）原样抛出，CLI 归为 exit 1。
@@ -514,6 +514,30 @@ async function markdownOutputs(root, repo, dirRel, pagesDoc, tokens) {
   return outputs;
 }
 
+function assertGitTracked(root, repo, targetRel, files) {
+  const expected = files.map((f) => `${targetRel}/${f}`);
+  let missing = 0;
+  for (const f of expected) {
+    try {
+      execFileSync('git', ['ls-files', '--error-unmatch', f], { cwd: root, stdio: 'pipe' });
+    } catch (cause) {
+      if (cause?.status === 1) {
+        console.error(`[assert-git] ${repo.name}: 未被 Git 索引跟踪（请先 git add）: ${f}`);
+        missing++;
+        continue;
+      }
+      const detail = String(cause?.stderr || cause?.message || '').trim();
+      throw configError(
+        repo.name,
+        `Git 索引查询失败: git ls-files --error-unmatch ${f}${detail ? `: ${detail}` : ''}`,
+        cause,
+      );
+    }
+  }
+  if (missing) throw new RenderError(`[assert-git] ${repo.name}: ${missing} 个渲染文件未被 Git 索引跟踪`, 1);
+  console.log(`[assert-git] ${repo.name}: 全部渲染文件均已被 Git 索引跟踪`);
+}
+
 // --- 渲染单仓 ---
 async function renderRepo(root, repo, release, leakLiterals, { check, assertGit, inputOnly = false }) {
   const site = repo.site;
@@ -641,7 +665,7 @@ async function renderRepo(root, repo, release, leakLiterals, { check, assertGit,
     const baselineRel = join(targetRel, 'site-baseline.json');
     if (!existsSync(resolve(root, baselineRel))) {
       throw new RenderError(
-        `[render-public-site --check] ${repo.name}: 未找到已提交基线 site-baseline.json（请先渲染并提交）`,
+        `[render-public-site --check] ${repo.name}: 未找到磁盘基线 site-baseline.json（请先运行渲染）`,
         1,
       );
     }
@@ -685,24 +709,12 @@ async function renderRepo(root, repo, release, leakLiterals, { check, assertGit,
       );
     }
     console.log(`[render-public-site --check] ${repo.name}: 一致，无漂移`);
+    if (assertGit) assertGitTracked(root, repo, targetRel, files);
     return;
   }
 
   // assert-git 必须在任何 target 变更前完成，避免门禁失败留下部分替换结果。
-  if (assertGit) {
-    const expected = files.map((f) => `${targetRel}/${f}`);
-    let missing = 0;
-    for (const f of expected) {
-      try {
-        execFileSync('git', ['ls-files', '--error-unmatch', f], { cwd: root, stdio: 'pipe' });
-      } catch {
-        console.error(`[assert-git] ${repo.name}: 未跟踪（需 git add 并提交）: ${f}`);
-        missing++;
-      }
-    }
-    if (missing) throw new RenderError(`[assert-git] ${repo.name}: ${missing} 个文件未进 Git 快照，站点无法进入发布`, 1);
-    console.log(`[assert-git] ${repo.name}: 全部站点文件已在 Git 快照中`);
-  }
+  if (assertGit) assertGitTracked(root, repo, targetRel, files);
 
   // --- 写盘事务化：在目标目录的 canonical parent 内创建 sibling staging，
   // 写入和发布均使用 Foundation 公共目录发布 API。 ---
@@ -786,9 +798,11 @@ const USAGE_TEXT = `skill-family-doc-render — config-driven GitHub Pages knowl
 
 Usage:
   skill-family-doc-render                render every repo with a site field (writes)
-  skill-family-doc-render --check        read-only drift check against site-baseline.json
+  skill-family-doc-render --check        read-only drift check against the on-disk site-baseline.json
   skill-family-doc-render --repo <name>  render / check a single repo by name
-  skill-family-doc-render --assert-git   also assert rendered files are git-tracked
+  skill-family-doc-render --assert-git   assert rendered files are tracked in the Git index, then render
+  skill-family-doc-render --check --assert-git
+                                        read-only drift and Git index tracking checks
   skill-family-doc-render --status --repo <name>
                                         read-only coverage status and Git changes
   skill-family-doc-render --refresh-coverage --repo <name>

@@ -16,51 +16,54 @@ publication APIs. A failure before commit removes staging and leaves the existin
 untouched. After commit, or when publication is indeterminate, staging or displaced data may
 remain for diagnosis; the renderer does not guess or roll back.
 
-> **Version boundary:** this source tree is version `0.4.1`. Verify that exact version in the
-> official npm registry before treating it as installable. Version 0.4.1 preserves the
+> **Version boundary:** this source tree is version `0.4.4`. Verify that exact version in the
+> official npm registry before treating it as installable. Version 0.4.4 preserves the
 > `markdown-v1`, `editorial`, and `--check-project` behavior introduced in 0.4.0 and aligns the
-> renderer, documentation plugin, and public site at 0.4.1 for the joint release.
+> renderer, documentation plugin, and public site at 0.4.4 for the joint release.
 
 ## Install
 
 After confirming availability, install this release with an exact version:
 
 ```sh
-npm install --save-exact skill-family-doc-render@0.4.1
+npm install --save-exact skill-family-doc-render@0.4.4
 ```
 
 Requires Node.js `>=22.22.2 <23` (aligned with the skill-family foundation packages).
 
-Version 0.4.1 has exact runtime dependencies on `marked@18.0.11`,
-`skill-family-contracts@0.18.0`, and `skill-family-harness-node@0.18.0`. `marked` supplies the
+Version 0.4.4 has exact runtime dependencies on `marked@18.0.11`,
+`skill-family-contracts@0.19.3`, and `skill-family-harness-node@0.19.3`. `marked` supplies the
 Markdown lexer; the renderer applies its own restricted-format validation before passing semantic
 content to the template. The workspace profile check separately uses
-`skill-family-engineering-kit@0.18.0`.
+`skill-family-engineering-kit@0.19.3`.
 The 0.2.0 baseline format and exit-code changes are breaking changes; existing 0.1.x users
 must re-render their baseline before using `--check`. See the changelog for the full migration
 notes.
 
 ## CLI
 
-Use the exact 0.4.1 CLI for rendering, checks, coverage maintenance, and the Git index assertion:
+Use the exact 0.4.4 CLI for rendering, checks, coverage maintenance, and the Git index assertion:
 
 ```sh
 # render all repos with a site field (writes to disk)
-npx skill-family-doc-render@0.4.1
+npx skill-family-doc-render@0.4.4
 
-# drift check only: compare in-memory render against committed site-baseline.json, write nothing
-npx skill-family-doc-render@0.4.1 --check
+# drift check only: compare in-memory render against the on-disk site-baseline.json, write nothing
+npx skill-family-doc-render@0.4.4 --check
 
 # render / check a single repo by name
-npx skill-family-doc-render@0.4.1 --repo <name>
+npx skill-family-doc-render@0.4.4 --repo <name>
 
-# additionally assert every rendered file is tracked in the git index
-npx skill-family-doc-render@0.4.1 --assert-git
+# assert every rendered file is tracked in the Git index, then render
+npx skill-family-doc-render@0.4.4 --assert-git
+
+# run both the drift and Git index tracking checks without writing
+npx skill-family-doc-render@0.4.4 --check --assert-git
 
 # inspect or refresh the reviewed product-input snapshot
-npx skill-family-doc-render@0.4.1 --status --repo <name>
-npx skill-family-doc-render@0.4.1 --refresh-coverage --repo <name>
-npx skill-family-doc-render@0.4.1 --check-project --repo <name>
+npx skill-family-doc-render@0.4.4 --status --repo <name>
+npx skill-family-doc-render@0.4.4 --refresh-coverage --repo <name>
+npx skill-family-doc-render@0.4.4 --check-project --repo <name>
 ```
 
 The current directory must be the workspace that owns `public-release.json`. From this package's
@@ -73,14 +76,20 @@ then internal links and resources. It writes nothing. A failure identifies the r
 `public-release.json`, the reason, and a copyable `skill-family-docs-render-site` recovery prompt.
 
 Exit codes: `0` success; `1` drift/status class — `--check` drift, leak-scan hit, `--assert-git`
-missing files, missing/corrupt render baseline, or missing/stale coverage snapshot; `2`
+untracked rendered files, missing/corrupt render baseline, or missing/stale coverage snapshot; `2`
 configuration/tool class — missing/invalid `public-release.json` or `pages.json`, JSON parse
 failures, unreplaced `@TOKEN@` placeholders, invalid `--repo` usage, invalid coverage inputs, or
 Git failure (the message includes the JSON field path). `--check-project` uses the same classes:
 public-safety, coverage, render, link, or resource findings return `1`; invalid input,
 configuration, or tool errors return `2`.
-When several repos are
-rendered in one run, each repo is isolated: a failure in one does not stop the others, and the
+Combining `--check` with `--assert-git` first verifies the render against the on-disk baseline,
+then checks that every rendered page, asset, and `.nojekyll` entry is tracked in the Git index.
+The combined command writes neither the target tree, `site-baseline.json`, nor the Git index.
+`site-baseline.json` itself, source Markdown, configuration, and coverage locks are outside the
+Git assertion set. A staged file satisfies the assertion; the command does not claim that the
+file is committed or published. Without `--check`, a successful `--assert-git` preflight is
+followed by the normal rendering write. When several repos are rendered in one run, each repo is
+isolated: a failure in one does not stop the others, and the
 run ends with a summary of successes/failures plus a non-zero exit (2 if any failure was
 configuration-class, otherwise 1).
 
@@ -274,10 +283,10 @@ Foundation packages below, it uses exact `marked@18.0.11` for Markdown tokenizat
 Apache-2.0
 
 <!-- release-skill:capability:safe-first-command -->
-> **Start here:** run `npx skill-family-doc-render@0.4.1 --check-project --repo <name>` after
+> **Start here:** run `npx skill-family-doc-render@0.4.4 --check-project --repo <name>` after
 > confirming that exact release in the official registry. From a local checkout, use
 > `node bin/skill-family-doc-render.mjs --check-project --repo <name>`. The check is read-only:
-> it renders in memory, compares against the committed `site-baseline.json`, writes
+> it renders in memory, compares against the on-disk `site-baseline.json`, writes
 > nothing and touches no network or credentials. The CLI performs no Git writes; only an
 > explicit `--assert-git` performs a read-only query of the Git index.
 
@@ -298,6 +307,6 @@ Apache-2.0
 Display help and run a read-only project check:
 
 ```sh
-npx skill-family-doc-render@0.4.1 --help
-npx skill-family-doc-render@0.4.1 --check-project --repo <name>
+npx skill-family-doc-render@0.4.4 --help
+npx skill-family-doc-render@0.4.4 --check-project --repo <name>
 ```
