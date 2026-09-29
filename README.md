@@ -16,64 +16,99 @@ publication APIs. A failure before commit removes staging and leaves the existin
 untouched. After commit, or when publication is indeterminate, staging or displaced data may
 remain for diagnosis; the renderer does not guess or roll back.
 
-> **Version boundary:** this source tree is version `0.4.5`. Verify that exact version in the
-> official npm registry before treating it as installable. Version 0.4.5 preserves the
-> `markdown-v1`, `editorial`, and `--check-project` behavior introduced in 0.4.0 and aligns the
-> renderer, documentation plugin, and public site at 0.4.5 for the joint release.
+> **Version boundary:** this source tree is version `0.5.0`. That is the local version and the
+> intended joint target for the renderer, documentation plugin, and public site. Confirm this
+> exact version in the official npm registry before `npm install` or `npx`. Published `0.4.5`
+> preserves the `markdown-v1`, `editorial`, and `--check-project` behavior introduced in 0.4.0
+> and has no `--conclusion-output` or `--read-proof`. Those two commands belong to this 0.5.0
+> CLI. The examples give the command shape for that version. They leave publication, Skill
+> Family Hub registration, and new host-reply acceptance to the official records for `0.5.0`.
 
 ## Install
 
-After confirming availability, install this release with an exact version:
+After confirming `skill-family-doc-render@0.5.0` in the official npm registry, install that exact version:
 
 ```sh
-npm install --save-exact skill-family-doc-render@0.4.5
+npm install --save-exact skill-family-doc-render@0.5.0
 ```
 
 Requires Node.js `>=22.22.2 <23` (aligned with the skill-family foundation packages).
 
-Version 0.4.5 has exact runtime dependencies on `marked@18.0.11`,
-`skill-family-contracts@0.19.3`, and `skill-family-harness-node@0.19.3`. `marked` supplies the
+This checkout currently pins exact runtime dependencies on `marked@18.0.11`,
+`skill-family-contracts@0.22.0`, and `skill-family-harness-node@0.22.0`. `marked` supplies the
 Markdown lexer; the renderer applies its own restricted-format validation before passing semantic
 content to the template. The workspace profile check separately uses
-`skill-family-engineering-kit@0.19.3`.
+`skill-family-engineering-kit@0.22.0`. These pins describe the local source and installed
+packages; they do not republish `0.5.0`.
 The 0.2.0 baseline format and exit-code changes are breaking changes; existing 0.1.x users
 must re-render their baseline before using `--check`. See the changelog for the full migration
 notes.
 
 ## CLI
 
-Use the exact 0.4.5 CLI for rendering, checks, coverage maintenance, and the Git index assertion:
+Use the exact 0.5.0 CLI for rendering, checks, coverage maintenance, the Git index assertion, and the proof commands. Confirm `skill-family-doc-render@0.5.0` in the official npm registry before running them. Published 0.4.5 can run the commands that omit `--conclusion-output` and `--read-proof`.
 
 ```sh
 # render all repos with a site field (writes to disk)
-npx skill-family-doc-render@0.4.5
+npx skill-family-doc-render@0.5.0
 
 # drift check only: compare in-memory render against the on-disk site-baseline.json, write nothing
-npx skill-family-doc-render@0.4.5 --check
+npx skill-family-doc-render@0.5.0 --check
 
 # render / check a single repo by name
-npx skill-family-doc-render@0.4.5 --repo <name>
+npx skill-family-doc-render@0.5.0 --repo <name>
 
 # assert every rendered file is tracked in the Git index, then render
-npx skill-family-doc-render@0.4.5 --assert-git
+npx skill-family-doc-render@0.5.0 --assert-git
 
 # run both the drift and Git index tracking checks without writing
-npx skill-family-doc-render@0.4.5 --check --assert-git
+npx skill-family-doc-render@0.5.0 --check --assert-git
 
 # inspect or refresh the reviewed product-input snapshot
-npx skill-family-doc-render@0.4.5 --status --repo <name>
-npx skill-family-doc-render@0.4.5 --refresh-coverage --repo <name>
-npx skill-family-doc-render@0.4.5 --check-project --repo <name>
+npx skill-family-doc-render@0.5.0 --status --repo <name>
+npx skill-family-doc-render@0.5.0 --refresh-coverage --repo <name>
+npx skill-family-doc-render@0.5.0 --check-project --repo <name>
+
+# after the mechanical check, exclusive-create one proof; do not overwrite
+npx skill-family-doc-render@0.5.0 --check-project --repo <name> --conclusion-output /absolute/path/conclusion.json
+
+# read one existing proof from any working directory; write nothing
+npx skill-family-doc-render@0.5.0 --read-proof --proof-root /absolute/proof-root --proof relative/conclusion.json
 ```
 
-The current directory must be the workspace that owns `public-release.json`. From this package's
-source checkout, `node bin/skill-family-doc-render.mjs` is the equivalent local CLI entry.
+`--check-project` still requires the current directory to own `public-release.json`.
+`--read-proof` does not read that file and does not require a site configuration.
 
 `--check-project` requires exactly one `--repo <name>`. It cannot be combined with `--check`,
-`--status`, `--refresh-coverage`, `--assert-git`, or `--help`. It checks input and public-content
-safety, the mechanical Markdown contract, coverage freshness, the in-memory render and baseline,
-then internal links and resources. It writes nothing. A failure identifies the repo,
-`public-release.json`, the reason, and a copyable `skill-family-docs-render-site` recovery prompt.
+`--status`, `--refresh-coverage`, `--assert-git`, `--help`, or `--read-proof`. It checks input and
+public-content safety, the mechanical Markdown contract, coverage freshness, the in-memory render
+and baseline, then internal links and resources. It does not re-render to make the check pass, and
+it does not run target scripts or hooks. Without `--conclusion-output` it writes nothing. A failure
+identifies the repo, `public-release.json`, the reason, and a copyable
+`skill-family-docs-render-site` recovery prompt.
+
+`--conclusion-output` is optional and only valid with `--check-project`. The path must be
+absolute. When present, the renderer exclusive-writes one Foundation
+`professional-conclusion` file after the mechanical check. It does not replace an existing file.
+The conclusion records only checks that actually ran. Domain codes are `DOCS_CLEAR`,
+`DOCS_FINDINGS`, `DOCS_CHECK_INCOMPLETE`, and `DOCS_CHECK_UNAVAILABLE`. The renderer conclusion is
+mechanical only; a passing link check is not a Chinese semantic review. A stored proof records
+the original target's conclusion at that time.
+
+`--read-proof` is mutually exclusive with `--check-project`. It reads one proof from
+`--proof-root` + `--proof`, validates the common structure, and prints a JSON result with
+`status` (`pass`, `not_pass`, or `unavailable`), `reason`, `provider`, and `conclusion`.
+It does not rescan the project, follow paths inside the proof, or execute the target.
+Same-version `DOCS_CLEAR` maps to `pass` only when `completion` is `complete`;
+`DOCS_FINDINGS`, `DOCS_CHECK_INCOMPLETE`, and `DOCS_CHECK_UNAVAILABLE` map to `not_pass`.
+That status keeps the proof's recorded non-pass. A missing file, damaged JSON, a different
+provider, or an unknown same-version domain code is `unavailable` (exit `2`). Earlier
+local-candidate runs exercised proof output and proof reading; those runs keep their original
+scene limits. Publication, Hub registration, and new host replies for `0.5.0` stay with the
+official records. These proof commands consume the Foundation
+`professional-conclusion` contract from `skill-family-contracts@0.22.0`. Refreshing a proof
+means running `--check-project` again to a new output path. Remediation, site creation, and
+render writes stay on their original authorized commands.
 
 Exit codes: `0` success; `1` drift/status class — `--check` drift, leak-scan hit, `--assert-git`
 untracked rendered files, missing/corrupt render baseline, or missing/stale coverage snapshot; `2`
@@ -283,9 +318,11 @@ Foundation packages below, it uses exact `marked@18.0.11` for Markdown tokenizat
 Apache-2.0
 
 <!-- release-skill:capability:safe-first-command -->
-> **Start here:** run `npx skill-family-doc-render@0.4.5 --check-project --repo <name>` after
-> confirming that exact release in the official registry. From a local checkout, use
-> `node bin/skill-family-doc-render.mjs --check-project --repo <name>`. The check is read-only:
+> **Start here:** run `npx skill-family-doc-render@0.5.0 --check-project --repo <name>` after
+> confirming that exact version in the official registry. From a local checkout, stay in the
+> directory that owns `public-release.json` and call
+> `node /absolute/path/to/skill-family-doc-render/bin/skill-family-doc-render.mjs --check-project --repo <name>`,
+> replacing the placeholder with the real source path. The check is read-only:
 > it renders in memory, compares against the on-disk `site-baseline.json`, writes
 > nothing and touches no network or credentials. The CLI performs no Git writes; only an
 > explicit `--assert-git` performs a read-only query of the Git index.
@@ -294,7 +331,9 @@ Apache-2.0
 > **External write boundary:** rendering writes the declared target and a controlled sibling
 > staging directory, both within the target's canonical parent, with contained path checks. An
 > explicit `--refresh-coverage` writes only the declared coverage lock through an atomic file
-> replacement. `--status`, `--check`, and `--check-project` write nothing.
+> replacement. `--status`, `--check`, and `--check-project` write nothing unless
+> `--check-project` is given an explicit `--conclusion-output`, which exclusive-creates that
+> proof file and never overwrites it. `--read-proof` writes nothing.
 > Render, scan, baseline and `--assert-git` preflight failures happen before target changes.
 > Staging is removed after success or a clearly pre-commit failure; post-commit or
 > indeterminate failures may retain it to preserve diagnosable state.
@@ -307,6 +346,6 @@ Apache-2.0
 Display help and run a read-only project check:
 
 ```sh
-npx skill-family-doc-render@0.4.5 --help
-npx skill-family-doc-render@0.4.5 --check-project --repo <name>
+npx skill-family-doc-render@0.5.0 --help
+npx skill-family-doc-render@0.5.0 --check-project --repo <name>
 ```

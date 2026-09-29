@@ -27,7 +27,7 @@
 //   可预期失败统一封装为 RenderError 携带 exitCode。
 import { existsSync, readFileSync } from 'node:fs';
 import { readFile, readdir, rm, mkdtemp, realpath, stat, glob } from 'node:fs/promises';
-import { resolve, relative, extname, join, dirname, basename, posix } from 'node:path';
+import { resolve, relative, extname, join, dirname, basename, posix, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import {
@@ -47,6 +47,16 @@ import { compileMarkdownV1, replaceMarkdownTokens } from './lib/markdown-v1.mjs'
 import { assertSafeSvg } from './lib/svg-safety.mjs';
 import { checkRenderedLinks } from './lib/rendered-links.mjs';
 import { renderEditorialSite } from '../templates/editorial/index.mjs';
+import {
+  CHECK_STAGE_IDS,
+  ProofError,
+  buildDocsConclusion,
+  conclusionEntryForRepo,
+  mapScanToOutcome,
+  readProfessionalProof,
+  readProofExitCode,
+  writeProfessionalConclusion,
+} from './professional-conclusion.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -284,9 +294,22 @@ async function computeCoverageSnapshot(sourceRoot, repo) {
   return { snapshot, versionSources };
 }
 
+function gitReadEnv(extra = {}) {
+  return { ...process.env, GIT_OPTIONAL_LOCKS: '0', ...extra };
+}
+
+function gitReadArgv(args) {
+  return ['--no-optional-locks', '-c', 'core.fsmonitor=false', ...args];
+}
+
 function git(root, args, repoName) {
   try {
-    return execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+    return execFileSync('git', gitReadArgv(args), {
+      cwd: root,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: gitReadEnv(),
+    }).trim();
   } catch (cause) {
     const detail = String(cause.stderr || cause.message).trim();
     throw configError(repoName, `Git 命令失败: git ${args.join(' ')}${detail ? `: ${detail}` : ''}`, cause);
@@ -519,7 +542,11 @@ function assertGitTracked(root, repo, targetRel, files) {
   let missing = 0;
   for (const f of expected) {
     try {
-      execFileSync('git', ['ls-files', '--error-unmatch', f], { cwd: root, stdio: 'pipe' });
+      execFileSync('git', gitReadArgv(['ls-files', '--error-unmatch', f]), {
+        cwd: root,
+        stdio: 'pipe',
+        env: gitReadEnv(),
+      });
     } catch (cause) {
       if (cause?.status === 1) {
         console.error(`[assert-git] ${repo.name}: 未被 Git 索引跟踪（请先 git add）: ${f}`);
@@ -771,26 +798,164 @@ function projectCheckError(repoName, cause, fallbackExitCode = 1) {
   );
 }
 
+function attachDocsCheck(error, finished, attempted, notReached) {
+  error.docsCheck = { finished, attempted, notReached };
+  return error;
+}
+
 async function checkProject(root, repo, release, leakLiterals) {
+  const finished = [];
+  const stages = [
+    {
+      id: CHECK_STAGE_IDS[0],
+      run: async () => {
+        await renderRepo(root, repo, release, leakLiterals, { check: false, assertGit: false, inputOnly: true });
+        console.log(`[render-public-site --check-project] ${repo.name}: 输入、公开安全与正文机械合同通过`);
+      },
+    },
+    {
+      id: CHECK_STAGE_IDS[1],
+      run: async () => {
+        await reportCoverageStatus(root, repo);
+      },
+    },
+    {
+      id: CHECK_STAGE_IDS[2],
+      run: async () => {
+        await renderRepo(root, repo, release, leakLiterals, { check: true, assertGit: false });
+      },
+    },
+    {
+      id: CHECK_STAGE_IDS[3],
+      run: async () => {
+        const sourceRoot = await repoSourceRoot(root, repo);
+        const targetDir = await containedOrConfig(sourceRoot, repo.site.target, repo.name, 'site.target');
+        const pagesDoc = await readJsonContained(sourceRoot, join(repo.site.dir, repo.site.pages), 'pages.json', repo.name);
+        await checkRenderedLinks({ targetRoot: targetDir, pageIds: pagesDoc.pages.map((page) => page.id) });
+        console.log(`[render-public-site --check-project] ${repo.name}: 内部链接与资源通过`);
+        console.log(`[render-public-site --check-project] ${repo.name}: public-release.json 只读项目检查通过`);
+      },
+    },
+  ];
   try {
-    await renderRepo(root, repo, release, leakLiterals, { check: false, assertGit: false, inputOnly: true });
-    console.log(`[render-public-site --check-project] ${repo.name}: 输入、公开安全与正文机械合同通过`);
-    await reportCoverageStatus(root, repo);
-    await renderRepo(root, repo, release, leakLiterals, { check: true, assertGit: false });
-    const sourceRoot = await repoSourceRoot(root, repo);
-    const targetDir = await containedOrConfig(sourceRoot, repo.site.target, repo.name, 'site.target');
-    const pagesDoc = await readJsonContained(sourceRoot, join(repo.site.dir, repo.site.pages), 'pages.json', repo.name);
-    await checkRenderedLinks({ targetRoot: targetDir, pageIds: pagesDoc.pages.map((page) => page.id) });
-    console.log(`[render-public-site --check-project] ${repo.name}: 内部链接与资源通过`);
-    console.log(`[render-public-site --check-project] ${repo.name}: public-release.json 只读项目检查通过`);
+    for (const stage of stages) {
+      await stage.run();
+      finished.push(stage.id);
+    }
   } catch (cause) {
-    throw projectCheckError(repo.name, cause);
+    const remaining = stages.map((stage) => stage.id).filter((id) => !finished.includes(id));
+    throw attachDocsCheck(
+      projectCheckError(repo.name, cause),
+      finished,
+      remaining[0] ?? null,
+      remaining.slice(1),
+    );
   }
+}
+
+function subjectRevision(root) {
+  try {
+    return execFileSync('git', gitReadArgv(['rev-parse', 'HEAD']), {
+      cwd: root,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: gitReadEnv(),
+    }).trim();
+  } catch {
+    return undefined;
+  }
+}
+
+function asRenderError(error) {
+  if (error instanceof RenderError) return error;
+  if (error instanceof ProofError) return new RenderError(error.message, error.exitCode, error);
+  return error;
+}
+
+async function emitProjectConclusion({
+  outputPath,
+  root,
+  repoName,
+  ok,
+  exitCode,
+  message,
+  cause = null,
+  docsCheck,
+  repoSelected = true,
+}) {
+  const outcome = mapScanToOutcome({
+    ok,
+    exitCode,
+    finished: docsCheck?.finished || [],
+    attempted: docsCheck?.attempted || null,
+    notReached: docsCheck?.notReached || (ok ? [] : [...CHECK_STAGE_IDS]),
+    repoSelected,
+    cause,
+  });
+  const conclusion = buildDocsConclusion({
+    entry: conclusionEntryForRepo(repoName),
+    subjectRef: `${root}::${repoName}`,
+    subjectRevision: subjectRevision(root),
+    checked: outcome.checked,
+    limitations: outcome.limitations,
+    completion: outcome.completion,
+    code: outcome.code,
+    summary: outcome.summary,
+    details: {
+      mechanical: true,
+      repo: repoName,
+      exitCode,
+      findings: ok ? [] : [message],
+    },
+  });
+  const receipt = await writeProfessionalConclusion(outputPath, conclusion);
+  console.log(`[render-public-site --check-project] ${repoName}: professional conclusion written to ${receipt.path}`);
+  return receipt;
+}
+
+async function emitProjectConclusionOrThrow(args, primaryError) {
+  try {
+    await emitProjectConclusion(args);
+  } catch (cause) {
+    const writeError = asRenderError(cause);
+    if (primaryError) {
+      throw new RenderError(`${primaryError.message}\n${writeError.message}`, 2, writeError);
+    }
+    throw writeError;
+  }
+  if (primaryError) throw primaryError;
+}
+
+function takeValue(argv, i, flag, flags, key) {
+  if (flags[key] !== null) {
+    throw new RenderError(`[render-public-site] 参数错误: ${flag} 重复出现，取值语义不明确`, 2);
+  }
+  const value = argv[i + 1];
+  if (value === undefined || value === '' || value.startsWith('-')) {
+    throw new RenderError(`[render-public-site] ${flag} 后必须跟一个有效取值（不能缺省，且值不能是另一个选项）`, 2);
+  }
+  flags[key] = value;
+  return i + 1;
+}
+
+function projectModeError(flags, message) {
+  const error = projectCheckError(
+    flags.repoArg ?? '<missing>',
+    new RenderError(message, 2),
+    2,
+  );
+  error.repoArg = flags.repoArg;
+  if (flags.conclusionOutput && isAbsolute(flags.conclusionOutput)) {
+    error.conclusionOutput = flags.conclusionOutput;
+  }
+  return error;
 }
 
 // === 主流程 ===
 // 闭集参数解析：允许参数只有 --check / --assert-git / --status /
-// --refresh-coverage / --check-project / --repo <name> / --help / -h。
+// --refresh-coverage / --check-project / --conclusion-output <absolute-path> /
+// --read-proof / --proof-root <root> / --proof <relative> / --repo <name> /
+// --help / -h。
 // 未知选项、游离位置参数、重复取值参数、--repo 缺值或值本身是另一个选项，
 // 均以 RenderError（exit 2）失败，错误信息指出具体参数。不引入 CLI 框架。
 // --help / -h 由 main() 统一呈现：闭集解析先于配置读取与写盘，打印 USAGE_TEXT 后退出 0。
@@ -809,8 +974,12 @@ Usage:
                                         refresh only site-coverage-lock.json
   skill-family-doc-render --check-project --repo <name>
                                         read-only input, coverage, render and link checks
+  skill-family-doc-render --check-project --repo <name> --conclusion-output <absolute-path>
+                                        same read-only checks, then exclusive-write a professional conclusion
+  skill-family-doc-render --read-proof --proof-root <root> --proof <relative>
+                                        read one docs-family professional conclusion; do not rescan
 
-Reads public-release.json from the current working directory.`;
+Reads public-release.json from the current working directory except --read-proof.`;
 
 function parseArgs(argv) {
   const flags = {
@@ -819,7 +988,11 @@ function parseArgs(argv) {
     status: false,
     refreshCoverage: false,
     checkProject: false,
+    readProof: false,
     repoArg: null,
+    conclusionOutput: null,
+    proofRoot: null,
+    proof: null,
     help: false,
   };
   let i = 0;
@@ -835,6 +1008,8 @@ function parseArgs(argv) {
       flags.refreshCoverage = true;
     } else if (arg === '--check-project') {
       flags.checkProject = true;
+    } else if (arg === '--read-proof') {
+      flags.readProof = true;
     } else if (arg === '--help' || arg === '-h') {
       flags.help = true;
     } else if (arg === '--repo') {
@@ -846,7 +1021,13 @@ function parseArgs(argv) {
         throw new RenderError('[render-public-site] --repo 后必须跟一个有效的 repo 名（不能缺省，且值不能是另一个选项）', 2);
       }
       flags.repoArg = value;
-      i += 1; // 消费取值
+      i += 1;
+    } else if (arg === '--conclusion-output') {
+      i = takeValue(argv, i, '--conclusion-output', flags, 'conclusionOutput');
+    } else if (arg === '--proof-root') {
+      i = takeValue(argv, i, '--proof-root', flags, 'proofRoot');
+    } else if (arg === '--proof') {
+      i = takeValue(argv, i, '--proof', flags, 'proof');
     } else if (arg.startsWith('-')) {
       throw new RenderError(`[render-public-site] 参数错误: 未知选项 ${arg}`, 2);
     } else {
@@ -863,19 +1044,29 @@ function parseArgs(argv) {
   if ((flags.status || flags.refreshCoverage) && flags.repoArg === null) {
     throw new RenderError('[render-public-site] 参数错误: --status 与 --refresh-coverage 必须配合 --repo <name>', 2);
   }
+  if (flags.readProof && flags.checkProject) {
+    throw new RenderError('[render-public-site] 参数错误: --check-project 与 --read-proof 互斥', 2);
+  }
+  if (flags.readProof && (flags.check || flags.assertGit || flags.status || flags.refreshCoverage || flags.help || flags.conclusionOutput || flags.repoArg)) {
+    throw new RenderError('[render-public-site] 参数错误: --read-proof 不能与检查、覆盖、Git、帮助或 --conclusion-output 组合', 2);
+  }
+  if (flags.readProof && (flags.proofRoot === null || flags.proof === null)) {
+    throw new RenderError('[render-public-site] 参数错误: --read-proof 必须配合 --proof-root <root> 与 --proof <relative>', 2);
+  }
+  if (!flags.readProof && (flags.proofRoot !== null || flags.proof !== null)) {
+    throw new RenderError('[render-public-site] 参数错误: --proof-root 与 --proof 只能与 --read-proof 一起使用', 2);
+  }
+  if (flags.conclusionOutput && !flags.checkProject) {
+    throw new RenderError('[render-public-site] 参数错误: --conclusion-output 只能与 --check-project 一起使用', 2);
+  }
+  if (flags.conclusionOutput && !isAbsolute(flags.conclusionOutput)) {
+    throw projectModeError(flags, '参数错误: --conclusion-output 必须是绝对路径');
+  }
   if (flags.checkProject && (flags.check || flags.assertGit || flags.status || flags.refreshCoverage || flags.help)) {
-    throw projectCheckError(
-      flags.repoArg ?? '<missing>',
-      new RenderError('参数错误: --check-project 不能与其他检查、覆盖、Git 或帮助模式组合', 2),
-      2,
-    );
+    throw projectModeError(flags, '参数错误: --check-project 不能与其他检查、覆盖、Git 或帮助模式组合');
   }
   if (flags.checkProject && flags.repoArg === null) {
-    throw projectCheckError(
-      '<missing>',
-      new RenderError('参数错误: --check-project 必须配合 --repo <name>', 2),
-      2,
-    );
+    throw projectModeError(flags, '参数错误: --check-project 必须配合 --repo <name>');
   }
   return flags;
 }
@@ -886,7 +1077,20 @@ function parseArgs(argv) {
 // 单个 repo 内部（含泄漏扫描命中）保持 fail-fast。
 export async function main(argv = process.argv.slice(2), { cwd = process.cwd() } = {}) {
   // 闭集解析在读取任何配置或写盘之前完成；参数失败时目标树一个字节都不动。
-  const { check, assertGit, status, refreshCoverage, checkProject: projectCheck, repoArg, help } = parseArgs(argv);
+  const parsed = parseArgs(argv);
+  const {
+    check,
+    assertGit,
+    status,
+    refreshCoverage,
+    checkProject: projectCheck,
+    readProof,
+    repoArg,
+    conclusionOutput,
+    proofRoot,
+    proof,
+    help,
+  } = parsed;
   if (help) {
     console.log(USAGE_TEXT);
     return 0;
@@ -894,18 +1098,54 @@ export async function main(argv = process.argv.slice(2), { cwd = process.cwd() }
 
   const root = resolve(cwd);
 
+  if (readProof) {
+    const result = await readProfessionalProof({ proofRoot, proofPath: proof });
+    console.log(JSON.stringify(result, null, 2));
+    const code = readProofExitCode(result.status);
+    if (code === 0) return 0;
+    throw new RenderError(result.reason, code);
+  }
+
   // --- 读取发布配置 ---
   const releasePath = resolve(root, 'public-release.json');
   if (!existsSync(releasePath)) {
     const cause = new RenderError('[render-public-site] 未找到 public-release.json', 2);
-    throw projectCheck ? projectCheckError(repoArg, cause, 2) : cause;
+    const error = projectCheck ? projectCheckError(repoArg, cause, 2) : cause;
+    if (projectCheck && conclusionOutput) {
+      await emitProjectConclusionOrThrow({
+        outputPath: conclusionOutput,
+        root,
+        repoName: repoArg,
+        ok: false,
+        exitCode: 2,
+        message: error.message,
+        cause: error,
+        repoSelected: false,
+      }, error);
+    }
+    throw error;
   }
   let release;
   try {
     release = await readJsonContained(root, 'public-release.json', 'public-release.json', '(workspace)');
     assertValid(release, publicReleaseSchema, 'public-release.json');
   } catch (cause) {
-    if (projectCheck) throw projectCheckError(repoArg, cause, 2);
+    if (projectCheck) {
+      const error = projectCheckError(repoArg, cause, 2);
+      if (conclusionOutput) {
+        await emitProjectConclusionOrThrow({
+          outputPath: conclusionOutput,
+          root,
+          repoName: repoArg,
+          ok: false,
+          exitCode: 2,
+          message: error.message,
+          cause: error,
+          repoSelected: Boolean(repoArg),
+        }, error);
+      }
+      throw error;
+    }
     throw cause;
   }
 
@@ -921,12 +1161,38 @@ export async function main(argv = process.argv.slice(2), { cwd = process.cwd() }
     const hit = selected.find((r) => r.name === repoArg);
     if (!hit) {
       const cause = new RenderError(`[render-public-site] 未找到带 site 的 repo: ${repoArg}`, 2);
-      throw projectCheck ? projectCheckError(repoArg, cause, 2) : cause;
+      const error = projectCheck ? projectCheckError(repoArg, cause, 2) : cause;
+      if (projectCheck && conclusionOutput) {
+        await emitProjectConclusionOrThrow({
+          outputPath: conclusionOutput,
+          root,
+          repoName: repoArg,
+          ok: false,
+          exitCode: 2,
+          message: error.message,
+          cause: error,
+          repoSelected: false,
+        }, error);
+      }
+      throw error;
     }
     selected = [hit];
   }
   if (!selected.length) {
-    throw new RenderError('[render-public-site] public-release.json 中没有带 site 字段的 repo', 2);
+    const error = new RenderError('[render-public-site] public-release.json 中没有带 site 字段的 repo', 2);
+    if (projectCheck && conclusionOutput) {
+      await emitProjectConclusionOrThrow({
+        outputPath: conclusionOutput,
+        root,
+        repoName: repoArg ?? '<missing>',
+        ok: false,
+        exitCode: 2,
+        message: error.message,
+        cause: error,
+        repoSelected: false,
+      }, error);
+    }
+    throw error;
   }
 
   const results = [];
@@ -934,8 +1200,49 @@ export async function main(argv = process.argv.slice(2), { cwd = process.cwd() }
     try {
       if (status) await reportCoverageStatus(root, repo);
       else if (refreshCoverage) await refreshCoverageLock(root, repo);
-      else if (projectCheck) await checkProject(root, repo, release, leakLiterals);
-      else await renderRepo(root, repo, release, leakLiterals, { check, assertGit });
+      else if (projectCheck) {
+        let scanError = null;
+        try {
+          await checkProject(root, repo, release, leakLiterals);
+        } catch (cause) {
+          scanError = cause;
+        }
+        if (conclusionOutput) {
+          try {
+            await emitProjectConclusion({
+              outputPath: conclusionOutput,
+              root,
+              repoName: repo.name,
+              ok: !scanError,
+              exitCode: scanError ? (Number.isInteger(scanError.exitCode) ? scanError.exitCode : 1) : 0,
+              message: scanError ? scanError.message : 'ok',
+              cause: scanError,
+              docsCheck: scanError?.docsCheck || { finished: [...CHECK_STAGE_IDS], attempted: null, notReached: [] },
+              repoSelected: true,
+            });
+          } catch (cause) {
+            const writeError = asRenderError(cause);
+            results.push({
+              name: repo.name,
+              ok: false,
+              exitCode: 2,
+              message: scanError ? `${scanError.message}\n${writeError.message}` : writeError.message,
+              cause: writeError,
+            });
+            continue;
+          }
+        }
+        if (scanError) {
+          results.push({
+            name: repo.name,
+            ok: false,
+            exitCode: Number.isInteger(scanError.exitCode) ? scanError.exitCode : 1,
+            message: scanError.message,
+            cause: scanError,
+          });
+          continue;
+        }
+      } else await renderRepo(root, repo, release, leakLiterals, { check, assertGit });
       results.push({ name: repo.name, ok: true });
     } catch (err) {
       results.push({
