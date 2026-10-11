@@ -201,11 +201,13 @@ function tutorial(model, page) {
   return `<nav class="page-pager" aria-label="教程翻页">${previous ? `<a class="pager-previous" href="${pageHref(previous)}" rel="prev"><span>上一步</span><strong>← ${escape(label(previous))}</strong></a>` : ''}${next ? `<a class="pager-next" href="${pageHref(next)}" rel="next"><span>下一步</span><strong>${escape(label(next))} →</strong></a>` : ''}</nav>`;
 }
 function hero(model, page) {
-  const title = `<h1>${escape(page.title)}</h1><p class="intro">${renderInline(page.blocks[0].content)}</p>`;
+  const intro = `<p class="intro">${renderInline(page.blocks[0].content)}</p>`;
   if (page.kind !== 'home') {
     const promptIndex = page.kind === 'task' ? page.blocks.findIndex(block => block.type === 'code' && block.language === 'prompt') : -1;
-    return `<div class="page-heading">${title}${promptIndex >= 0 ? `<a class="text-action" href="#editorial-code-${promptIndex}">查看操作提示词 <span aria-hidden="true">↓</span></a>` : ''}</div>`;
+    const jump = promptIndex >= 0 ? `<a class="text-action" href="#editorial-code-${promptIndex}">查看操作提示词 <span aria-hidden="true">↓</span></a>` : '';
+    return `<div class="page-heading"><h1>${escape(page.title)}</h1>${jump}${intro}</div>`;
   }
+  const title = `<h1>${escape(page.title)}</h1>${intro}`;
   const tasks = model.pages.filter(item => item.inPager);
   const first = tasks[0];
   const maintenance = tasks.find(item => item.role === 'maintenance' && item !== first);

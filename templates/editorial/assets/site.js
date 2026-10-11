@@ -99,12 +99,49 @@
   let activeDialog;
   // Release synchronously before following links or switching dialogs. The queued
   // native close event must never restore an old position over a destination.
+  function captureViewport() {
+    return { left: window.scrollX, top: window.scrollY };
+  }
+  // Sticky header controls sit in document flow at y=0. Pointerdown/keydown must
+  // record the viewport before focus scrolls that in-flow box into view.
+  function bindOpener(button) {
+    let viewport = null;
+    const remember = () => { viewport = captureViewport(); };
+    button.addEventListener('pointerdown', remember);
+    button.addEventListener('touchstart', remember, { passive: true });
+    button.addEventListener('keydown', event => {
+      if (event.key === 'Enter' || event.key === ' ') remember();
+    });
+    button.addEventListener('mousedown', event => {
+      remember();
+      event.preventDefault();
+    });
+    return () => {
+      const value = viewport ?? captureViewport();
+      viewport = null;
+      return value;
+    };
+  }
+  function restoreScroll(state) {
+    const html = document.documentElement;
+    const previous = html.style.scrollBehavior;
+    html.style.scrollBehavior = 'auto';
+    const apply = () => window.scrollTo({ left: state.left, top: state.top, behavior: 'auto' });
+    apply();
+    requestAnimationFrame(() => {
+      apply();
+      requestAnimationFrame(apply);
+    });
+    setTimeout(apply, 0);
+    html.style.scrollBehavior = previous;
+  }
   function releaseDialog(state, returnFocus = true) {
     if (activeDialog !== state) return;
     activeDialog = null;
+    document.documentElement.classList.remove('modal-open');
     document.body.classList.remove('modal-open');
     document.body.style.removeProperty('top');
-    window.scrollTo({ left: state.left, top: state.top, behavior: 'instant' });
+    restoreScroll(state);
     if (returnFocus && state.invoker?.isConnected) state.invoker.focus({ preventScroll: true });
   }
   function closeDialog(dialog, returnFocus = true) {
@@ -112,11 +149,17 @@
     dialog.close();
     if (state?.dialog === dialog) releaseDialog(state, returnFocus);
   }
-  function showDialog(dialog, invoker) {
+  function showDialog(dialog, invoker, viewport) {
     if (activeDialog) closeDialog(activeDialog.dialog);
-    const state = { dialog, invoker, left: window.scrollX, top: window.scrollY };
+    const state = {
+      dialog,
+      invoker,
+      left: viewport?.left ?? window.scrollX,
+      top: viewport?.top ?? window.scrollY,
+    };
     activeDialog = state;
     document.body.style.top = `${-state.top}px`;
+    document.documentElement.classList.add('modal-open');
     document.body.classList.add('modal-open');
     try { dialog.showModal(); } catch (error) { releaseDialog(state); throw error; }
   }
@@ -130,7 +173,8 @@
       if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) closeDialog(dialog);
     });
   }
-  get('menu-toggle').addEventListener('click', () => showDialog(menu, get('menu-toggle')));
+  const menuViewport = bindOpener(get('menu-toggle'));
+  get('menu-toggle').addEventListener('click', () => showDialog(menu, get('menu-toggle'), menuViewport()));
   get('close-menu').addEventListener('click', () => closeDialog(menu));
   menu.addEventListener('click', event => {
     if (event.target.closest('a')) closeDialog(menu, false);
@@ -189,14 +233,15 @@
     setActiveResult(0, false);
     results.scrollTop = 0;
   }
-  function openSearch(invoker) {
+  const searchViewport = bindOpener(searchToggle);
+  function openSearch(invoker, viewport) {
     if (invoker?.closest('dialog')) invoker = searchToggle;
     input.value = '';
     updateSearch();
-    showDialog(searchDialog, invoker);
+    showDialog(searchDialog, invoker, viewport);
     input.focus({ preventScroll: true });
   }
-  searchToggle.addEventListener('click', () => openSearch(searchToggle));
+  searchToggle.addEventListener('click', () => openSearch(searchToggle, searchViewport()));
   get('close-search').addEventListener('click', () => closeDialog(searchDialog));
   input.addEventListener('input', updateSearch);
   input.addEventListener('keydown', event => {

@@ -6,7 +6,7 @@
   --surface: #fff;
   --ink: #26392f;
   --text: #3d4b43;
-  --muted: #657168;
+  --muted: #5f6c62; /* muted on tint must stay ≥4.5:1; #657168 was 4.394 */
   --line: #dce3d9;
   --green: #2f634c;
   --tint: #e9f0e7;
@@ -122,8 +122,10 @@ main:focus:not(:focus-visible) { outline: none; }
 .breadcrumb { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; color: var(--muted); font-size: 11px; margin: 0 auto 35px; max-width: 740px; }
 .breadcrumb > span:last-child { color: var(--text); }
 article { max-width: 740px; margin: 0 auto; }
-.intro { font-size: 15px; line-height: 1.9; color: var(--muted); margin-bottom: 20px; max-width: 44em; }
+article.page-home { overflow-x: clip; }
+.intro { font-size: 16px; line-height: 1.8; color: var(--muted); margin-bottom: 20px; max-width: 44em; }
 .page-heading { margin-bottom: 30px; }
+.page-heading .text-action { display: inline-flex; margin: -6px 0 14px; }
 .content-list { margin: 20px 0; padding-left: 1.5em; }
 .content-list li { padding-left: .3em; margin: 12px 0; }
 .heading-link { font-size: .7em; text-decoration: none; font-weight: 400; padding: 4px; opacity: .65; }
@@ -142,9 +144,9 @@ article { max-width: 740px; margin: 0 auto; }
 .article-footer a { text-decoration: none; white-space: nowrap; }
 
 /* Home page uses the same manifest-driven task sequence as the pager. */
-.home-hero { display: grid; grid-template-columns: minmax(0,1fr) 180px; align-items: center; gap: 25px; }
+.home-hero { display: grid; grid-template-columns: minmax(0,1fr) 180px; align-items: center; gap: 25px; overflow: hidden; }
 .home-hero h1 { font-size: 38px; }
-.home-hero .intro { font-size: 14px; }
+.home-hero .intro { font-size: 16px; }
 .hero-actions { display: flex; align-items: center; gap: 22px; flex-wrap: wrap; margin: 24px 0 12px; }
 .hero-actions:empty { display: none; }
 .button { display: inline-flex; align-items: center; justify-content: space-between; gap: 28px; text-decoration: none; border-radius: 7px; padding: 10px 14px 10px 18px; font-size: 13px; font-weight: 500; transition: transform 160ms var(--ease), background 160ms var(--ease); }
@@ -172,8 +174,8 @@ article { max-width: 740px; margin: 0 auto; }
 .route-list > a:first-child { border-top: 0; }
 .route-list > a:hover { background: var(--tint); padding-left: 10px; padding-right: 10px; }
 .route-number { font-size: 11px; color: var(--muted); align-self: flex-start; padding-top: 4px; flex: none; }
-.route-list h3 { font-size: 14px; margin: 0 0 3px; }
-.route-list p { font-size: 12px; color: var(--muted); margin: 0; line-height: 1.8; }
+.route-list h3 { font-size: 16px; margin: 0 0 3px; }
+.route-list p { font-size: 16px; color: var(--muted); margin: 0; line-height: 1.8; }
 .route-arrow { margin-left: auto; font-size: 18px; font-weight: 400; color: var(--green); flex: none; }
 
 /* Semantic blocks; no project-provided layout classes. */
@@ -208,7 +210,7 @@ td code { white-space: nowrap; }
 dialog { background: var(--surface); color: var(--text); border: 1px solid var(--line); border-radius: 12px; padding: 0; box-shadow: var(--shadow); }
 dialog:not([open]) { display: none; }
 dialog::backdrop { background: #162c2455; backdrop-filter: blur(3px); }
-html:has(dialog[open]) { overflow: hidden; }
+html.modal-open { overflow: hidden; }
 body.modal-open { position: fixed; left: 0; right: 0; width: 100%; }
 #editorial-search-dialog { width: min(600px,calc(100vw - 28px)); max-height: 75dvh; margin: 12dvh auto auto; }
 #editorial-search-dialog[open] { display: flex; flex-direction: column; }
@@ -238,7 +240,6 @@ body.modal-open { position: fixed; left: 0; right: 0; width: 100%; }
   .sidebar { padding-left: 32px; }
   .home-hero { grid-template-columns: minmax(0,1fr) 200px; gap: 35px; }
   .home-hero h1 { font-size: 42px; }
-  .home-hero .intro { font-size: 15px; }
 }
 @media (max-width: 1199px) {
   .layout { grid-template-columns: 210px minmax(0,1fr); }
@@ -269,7 +270,6 @@ body.modal-open { position: fixed; left: 0; right: 0; width: 100%; }
   .home-hero { grid-template-columns: minmax(0,1fr) 155px; gap: 20px; }
   .home-hero h1 { font-size: 34px; }
   h1 { font-size: 31px; }
-  .intro { font-size: 14px; }
   .hero-actions { gap: 17px; }
   .page-heading { margin-bottom: 24px; }
   .article-footer { margin-top: 42px; }
@@ -278,14 +278,11 @@ body.modal-open { position: fixed; left: 0; right: 0; width: 100%; }
   .home-hero { display: block; }
   .source-illustration { display: none; }
   .home-hero h1 { font-size: 34px; line-height: 1.42; }
-  .home-hero .intro { font-size: 14px; }
   .hero-actions { gap: 18px; margin-top: 22px; }
   h1 { font-size: 29px; letter-spacing: -.04em; }
   h2 { font-size: 21px; }
   .start-section { padding-top: 23px; margin-top: 30px; }
   .route-list > a { padding: 18px 0; gap: 12px; }
-  .route-list h3 { font-size: 14px; }
-  .route-list p { font-size: 12px; }
   .route-arrow { font-size: 16px; }
   .route-number { font-size: 10px; }
   .callout { padding: 14px; gap: 10px; font-size: 12px; }
@@ -313,7 +310,7 @@ body.modal-open { position: fixed; left: 0; right: 0; width: 100%; }
   }
   .site-header, .sidebar, .page-outline, .copy-button, .heading-copy, .heading-link,
   .page-pager, .article-footer, .toast, dialog, .skip-link, .mobile-fallback { display: none !important; }
-  html:has(dialog[open]) { overflow: visible; }
+  html.modal-open { overflow: visible; }
   body.modal-open { position: static; top: auto !important; }
   .layout { display: block; }
   main { padding: 0; }
