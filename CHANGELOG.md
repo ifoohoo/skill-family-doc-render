@@ -1,5 +1,16 @@
 # 变更日志
 
+## 0.6.2 - 2026-10-13
+
+### 变更
+
+- 按本仓联合发布合同，`skill-family-doc-render` 与 `skill-family-docs`、公开站点对齐为 0.6.2。渲染器 README 里指向当前源版本的安装和 `npx` 示例改为 0.6.2；已发布的 0.4.5，以及「不重新发布 0.6.0」，保持原句。渲染器的公开 API、命令行参数、输入合同、模板和业务实现均未改变，运行依赖仍精确锁定原版本。Foundation 0.22.0 钉扎不变。
+- 本版没有渲染器行为变化。相对 0.6.1 的说明修正是：`skill-family-docs-help` 的源文件与四份 adapter，以及 `packages/skill-family-docs/README.md`、仓库根 `README.md`，把过期能力状态句改为「主流程替换已随 0.6.1 正式发布并分发。」这些正文已在版本对齐前进入当前 HEAD。当时覆盖输入变化后，`site-coverage-lock.json` 已由原 `--refresh-coverage` 入口刷新。
+
+### 说明
+
+- 本地源包版本为 0.6.2 候选，不代表已经正式发布。安装或使用 `npx` 前，先在官方 npm 确认 `skill-family-doc-render@0.6.2` 可用。已发布的 0.6.1 保留，不覆盖该版本。
+
 ## 0.6.1 - 2026-10-12
 
 ### 变更
