@@ -16,20 +16,20 @@ publication APIs. A failure before commit removes staging and leaves the existin
 untouched. After commit, or when publication is indeterminate, staging or displaced data may
 remain for diagnosis; the renderer does not guess or roll back.
 
-> **Version boundary:** this source tree is version `0.6.5`. That is the local version and the
+> **Version boundary:** this source tree is version `0.6.6`. That is the local version and the
 > intended joint target for the renderer, documentation plugin, and public site. Confirm this
 > exact version in the official npm registry before `npm install` or `npx`. Published `0.4.5`
 > preserves the `markdown-v1`, `editorial`, and `--check-project` behavior introduced in 0.4.0
-> and has no `--conclusion-output` or `--read-proof`. Those two commands belong to this 0.6.5
+> and has no `--conclusion-output` or `--read-proof`. Those two commands belong to this 0.6.6
 > CLI. The examples give the command shape for that version. They leave publication, Skill
-> Family Hub registration, and new host-reply acceptance to the official records for `0.6.5`.
+> Family Hub registration, and new host-reply acceptance to the official records for `0.6.6`.
 
 ## Install
 
-After confirming `skill-family-doc-render@0.6.5` in the official npm registry, install that exact version:
+After confirming `skill-family-doc-render@0.6.6` in the official npm registry, install that exact version:
 
 ```sh
-npm install --save-exact skill-family-doc-render@0.6.5
+npm install --save-exact skill-family-doc-render@0.6.6
 ```
 
 Requires Node.js `>=22.22.2 <23` (aligned with the skill-family foundation packages).
@@ -46,34 +46,34 @@ notes.
 
 ## CLI
 
-Use the exact 0.6.5 CLI for rendering, checks, coverage maintenance, the Git index assertion, and the proof commands. Confirm `skill-family-doc-render@0.6.5` in the official npm registry before running them. Published 0.4.5 can run the commands that omit `--conclusion-output` and `--read-proof`.
+Use the exact 0.6.6 CLI for rendering, checks, coverage maintenance, the Git index assertion, and the proof commands. Confirm `skill-family-doc-render@0.6.6` in the official npm registry before running them. Published 0.4.5 can run the commands that omit `--conclusion-output` and `--read-proof`.
 
 ```sh
 # render all repos with a site field (writes to disk)
-npx skill-family-doc-render@0.6.5
+npx skill-family-doc-render@0.6.6
 
 # drift check only: compare in-memory render against the on-disk site-baseline.json, write nothing
-npx skill-family-doc-render@0.6.5 --check
+npx skill-family-doc-render@0.6.6 --check
 
 # render / check a single repo by name
-npx skill-family-doc-render@0.6.5 --repo <name>
+npx skill-family-doc-render@0.6.6 --repo <name>
 
 # assert every rendered file is tracked in the Git index, then render
-npx skill-family-doc-render@0.6.5 --assert-git
+npx skill-family-doc-render@0.6.6 --assert-git
 
 # run both the drift and Git index tracking checks without writing
-npx skill-family-doc-render@0.6.5 --check --assert-git
+npx skill-family-doc-render@0.6.6 --check --assert-git
 
 # inspect or refresh the reviewed product-input snapshot
-npx skill-family-doc-render@0.6.5 --status --repo <name>
-npx skill-family-doc-render@0.6.5 --refresh-coverage --repo <name>
-npx skill-family-doc-render@0.6.5 --check-project --repo <name>
+npx skill-family-doc-render@0.6.6 --status --repo <name>
+npx skill-family-doc-render@0.6.6 --refresh-coverage --repo <name>
+npx skill-family-doc-render@0.6.6 --check-project --repo <name>
 
 # after the mechanical check, exclusive-create one proof; do not overwrite
-npx skill-family-doc-render@0.6.5 --check-project --repo <name> --conclusion-output /absolute/path/conclusion.json
+npx skill-family-doc-render@0.6.6 --check-project --repo <name> --conclusion-output /absolute/path/conclusion.json
 
 # read one existing proof from any working directory; write nothing
-npx skill-family-doc-render@0.6.5 --read-proof --proof-root /absolute/proof-root --proof relative/conclusion.json
+npx skill-family-doc-render@0.6.6 --read-proof --proof-root /absolute/proof-root --proof relative/conclusion.json
 ```
 
 `--check-project` still requires the current directory to own `public-release.json`.
@@ -104,7 +104,7 @@ Same-version `DOCS_CLEAR` maps to `pass` only when `completion` is `complete`;
 That status keeps the proof's recorded non-pass. A missing file, damaged JSON, a different
 provider, or an unknown same-version domain code is `unavailable` (exit `2`). Earlier
 local-candidate runs exercised proof output and proof reading; those runs keep their original
-scene limits. Publication, Hub registration, and new host replies for `0.6.5` stay with the
+scene limits. Publication, Hub registration, and new host replies for `0.6.6` stay with the
 official records. These proof commands consume the Foundation
 `professional-conclusion` contract from `skill-family-contracts@0.26.0`. Refreshing a proof
 means running `--check-project` again to a new output path. Remediation, site creation, and
@@ -318,14 +318,18 @@ Foundation packages below, it uses exact `marked@18.0.11` for Markdown tokenizat
 Apache-2.0
 
 <!-- release-skill:capability:safe-first-command -->
-> **Start here:** run `npx skill-family-doc-render@0.6.5 --check-project --repo <name>` after
+> **Start here:** run `npx skill-family-doc-render@0.6.6 --check-project --repo <name>` after
 > confirming that exact version in the official registry. From a local checkout, stay in the
 > directory that owns `public-release.json` and call
 > `node /absolute/path/to/skill-family-doc-render/bin/skill-family-doc-render.mjs --check-project --repo <name>`,
 > replacing the placeholder with the real source path. The check is read-only:
 > it renders in memory, compares against the on-disk `site-baseline.json`, writes
-> nothing and touches no network or credentials. The CLI performs no Git writes; only an
-> explicit `--assert-git` performs a read-only query of the Git index.
+> nothing and touches no network or credentials. The CLI performs no Git writes.
+> The `--assert-git` preflight specifically verifies that every rendered file is tracked in the
+> Git index — not committed or published — and is evaluated before any write. The `--status` and
+> `--check-project` commands query Git history, index, and worktree for coverage reporting. The
+> local `0.6.6` coverage query fix preserves index bytes and avoids treating
+> filesystem-stat-only changes as content changes.
 
 <!-- release-skill:capability:external-write-boundary -->
 > **External write boundary:** rendering writes the declared target and a controlled sibling
@@ -337,15 +341,17 @@ Apache-2.0
 > Render, scan, baseline and `--assert-git` preflight failures happen before target changes.
 > Staging is removed after success or a clearly pre-commit failure; post-commit or
 > indeterminate failures may retain it to preserve diagnosable state.
-> It performs no Git writes, no network calls, and no writes outside that parent scope.
-> Only an explicit `--assert-git` performs a read-only query of the Git index. The pre-write
-> leak scan fails closed on private literals.
+> It performs no Git writes or network calls.
+> The `--status` and `--check-project` commands query Git history, index, and worktree for
+> coverage reporting. The separately declared coverage lock and explicitly requested proof have
+> separate, described output paths.
+> The pre-write leak scan fails closed on private literals.
 
 ## Minimal example
 
 Display help and run a read-only project check:
 
 ```sh
-npx skill-family-doc-render@0.6.5 --help
-npx skill-family-doc-render@0.6.5 --check-project --repo <name>
+npx skill-family-doc-render@0.6.6 --help
+npx skill-family-doc-render@0.6.6 --check-project --repo <name>
 ```

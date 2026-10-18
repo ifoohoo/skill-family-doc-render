@@ -309,7 +309,7 @@ function git(root, args, repoName) {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
       env: gitReadEnv(),
-    }).trim();
+    }).trimEnd();
   } catch (cause) {
     const detail = String(cause.stderr || cause.message).trim();
     throw configError(repoName, `Git 命令失败: git ${args.join(' ')}${detail ? `: ${detail}` : ''}`, cause);
@@ -349,7 +349,9 @@ function coverageGitStatus(sourceRoot, repo, snapshot, baseline) {
     for (const path of knownInputs) changed.add(path);
   }
   collect(splitLines(git(sourceRoot, ['diff', '--cached', '--name-only', '--no-renames'], repo.name)));
-  collect(splitLines(git(sourceRoot, ['diff', '--name-only', '--no-renames'], repo.name)));
+  // status 在禁用 optional locks 时保留索引，并按内容判断变化；-z 保留路径原字节。
+  const worktreeStatus = git(sourceRoot, ['status', '--porcelain=v1', '-z', '--untracked-files=no', '--no-renames'], repo.name);
+  collect(worktreeStatus.split('\0').filter(Boolean).map((entry) => entry.slice(3)));
   collect(splitLines(git(sourceRoot, ['ls-files', '--others', '--exclude-standard'], repo.name)));
 
   const suggestions = coverageCommit
