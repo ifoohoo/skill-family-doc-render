@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 36 36">
+  <defs>
+    <linearGradient id="sf-modern-bg" x1="4" y1="3" x2="32" y2="33" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#4f46e5"/>
+      <stop offset="1" stop-color="#312e81"/>
+    </linearGradient>
+    <linearGradient id="sf-modern-sheet" x1="9" y1="9" x2="27" y2="27" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#e0e7ff"/>
+    </linearGradient>
+  </defs>
+  <rect x="1" y="1" width="34" height="34" rx="9" fill="url(#sf-modern-bg)"/>
+  <rect x="10" y="9" width="16" height="18" rx="3.5" fill="none" stroke="url(#sf-modern-sheet)" stroke-width="1.75"/>
+  <path d="M13.5 14.5h9M13.5 18.5h9M13.5 22.5h5.5" fill="none" stroke="#ffffff" stroke-width="1.75" stroke-linecap="round"/>
+  <circle cx="25.5" cy="9.5" r="2.25" fill="#a5b4fc"/>
+</svg>

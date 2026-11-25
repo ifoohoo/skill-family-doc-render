@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @feature DOC1 @scenario S-01 S-02
 // 只读检查已渲染站点的相对页面、资源、CSS 依赖与页内锚点。
 import { dirname, extname, relative, resolve } from 'node:path';
 import { readFileContained, resolveContained } from 'skill-family-harness-node';
@@ -14,15 +15,27 @@ function isExternal(value) {
   return /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(value);
 }
 
+function maskEmbeddedBlocks(html) {
+  return html
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, ' ');
+}
+
 function anchorsOf(html) {
   const anchors = new Set();
-  for (const match of html.matchAll(/\s(?:id|name)\s*=\s*["']([^"']+)["']/gi)) anchors.add(match[1]);
+  for (const match of maskEmbeddedBlocks(html).matchAll(/\s(?:id|name)\s*=\s*["']([^"']+)["']/gi)) {
+    anchors.add(match[1]);
+  }
   return anchors;
 }
 
 function referencesOf(html) {
   const refs = [];
-  for (const match of html.matchAll(/\s(?:href|src)\s*=\s*["']([^"']+)["']/gi)) refs.push(match[1].trim());
+  const masked = maskEmbeddedBlocks(html);
+  for (const match of masked.matchAll(/\s(?:href|src|data-search-index)\s*=\s*["']([^"']+)["']/gi)) {
+    refs.push(match[1].trim());
+  }
   return refs;
 }
 
@@ -90,7 +103,10 @@ export async function checkRenderedLinks({ targetRoot, pageIds }) {
       }
       if (!anchorsOf(targetHtml).has(decodedFragment)) failures.push(`${originLabel}: ${raw} 指向不存在的页内锚点`);
     }
-    if (extension === '.html') await inspectHtml(target, relative(targetDir, target).replaceAll('\\', '/'));
+    if (extension === '.html') {
+      const htmlRel = relative(targetDir, target).replaceAll('\\', '/');
+      await inspectHtml(target, htmlRel);
+    }
     if (extension === '.css') {
       const cssRel = relative(targetDir, target).replaceAll('\\', '/');
       if (visitedCss.has(cssRel)) return;

@@ -2,45 +2,117 @@
   "$id": "https://github.com/ifoohoo/skill-family-doc-render/schemas/public-release.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "public-release.json",
-  "description": "skill-family-doc-render 的渲染配置真源：谁带 site 字段就渲染谁。",
+  "description": "公开知识站渲染与覆盖检查的唯一配置真源；渲染器仅处理声明了 site 字段的仓库项。",
   "type": "object",
   "additionalProperties": false,
   "required": ["repos"],
   "properties": {
-    "owner": { "type": "string", "minLength": 1 },
-    "defaultBranch": { "type": "string", "minLength": 1 },
-    "license": { "type": "string", "minLength": 1 },
+    "owner": {
+      "type": "string",
+      "minLength": 1,
+      "description": "仓库所属组织或维护者名称，用于旧 HTML 兼容模式的页脚版权展示。"
+    },
+    "defaultBranch": {
+      "type": "string",
+      "minLength": 1,
+      "description": "工作区默认主分支名称（如 main）。"
+    },
+    "license": {
+      "type": "string",
+      "minLength": 1,
+      "description": "项目开源许可证标识符（如 Apache-2.0）。"
+    },
     "repos": {
       "type": "array",
       "minItems": 1,
+      "description": "纳入当前工作区管理的仓库列表，至少包含一项。",
       "items": {
         "type": "object",
         "additionalProperties": false,
         "required": ["name", "source"],
         "properties": {
-          "name": { "type": "string", "minLength": 1 },
-          "source": { "type": "string", "minLength": 1 },
-          "tagPrefix": { "type": "string", "minLength": 1 },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "仓库唯一标识名，供 --repo <name> 选择及自动派生版本占位符前缀。"
+          },
+          "source": {
+            "type": "string",
+            "minLength": 1,
+            "description": "相对工作区根目录的仓库源路径（工作区自身填 \".\"），必须收容于工作区内。"
+          },
+          "tagPrefix": {
+            "type": "string",
+            "minLength": 1,
+            "description": "自动派生 @{NAME}_TAG@ 占位符时拼接在版本号前的标签前缀。"
+          },
           "site": {
             "type": "object",
             "additionalProperties": false,
             "required": ["dir", "target", "pages"],
+            "description": "公开知识站渲染、模板、版本来源与产品输入覆盖配置。",
             "properties": {
-              "dir": { "type": "string", "minLength": 1 },
-              "target": { "type": "string", "minLength": 1 },
-              "pages": { "type": "string", "minLength": 1 },
-              "format": { "const": "markdown-v1" },
-              "template": { "const": "editorial" },
+              "dir": {
+                "type": "string",
+                "minLength": 1,
+                "description": "相对 repo.source 的站点源目录路径（存放 pages.json 与各页面正文）。"
+              },
+              "target": {
+                "type": "string",
+                "minLength": 1,
+                "description": "相对 repo.source 的静态产物输出目录路径，不得与 site.dir 相同或嵌套重叠。"
+              },
+              "pages": {
+                "type": "string",
+                "minLength": 1,
+                "description": "相对 site.dir 的页面清单文件名（通常为 pages.json）。"
+              },
+              "format": {
+                "enum": ["markdown-v2", "markdown-v1"],
+                "description": "Markdown 内容格式（新站使用 markdown-v2；存量 markdown-v1 自动兼容映射至现代编译内核）。"
+              },
+              "template": {
+                "enum": ["modern", "editorial"],
+                "description": "渲染包内置现代模板标识（推荐 modern；存量 editorial 自动映射至 modern 设计系统）。"
+              },
+              "publicSiteRepo": {
+                "type": "string",
+                "minLength": 1,
+                "description": "独立公开文档站 GitHub 仓库坐标（推荐统一命名为 <owner>/<id>-site，如 ifoohoo/skill-family-foundation-site）。"
+              },
+              "pagesUrl": {
+                "type": "string",
+                "minLength": 1,
+                "description": "公开文档站最终 GitHub Pages 访问地址（须为 https:// URL，如 https://ifoohoo.github.io/skill-family-foundation-site/）。"
+              },
+              "legacySiteRepoAllowlist": {
+                "type": "boolean",
+                "description": "仅用于历史存量公开文档仓库（如 D00000-Archt/glaf4-dev-docs）显式豁免 -site 后缀检查。"
+              },
+              "publicReadmePaths": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "description": "相对 repo.source 的公开说明文档路径列表（多包目录用于逐个检查公开包 README.md / README.zh-CN.md 显式包含 pagesUrl；缺省检查 repo.source/README.md）。",
+                "items": { "type": "string", "minLength": 1, "pattern": "^[^*?\\[\\]{}()!]+$" }
+              },
               "coverage": {
                 "type": "object",
                 "additionalProperties": false,
                 "required": ["lock", "inputs"],
+                "description": "知识站已审阅产品输入的覆盖快照配置，用于检测代码或制品变更后文档是否漏更。",
                 "properties": {
-                  "lock": { "type": "string", "minLength": 1, "pattern": "^[^*?\\[\\]{}()!]+$" },
+                  "lock": {
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "^[^*?\\[\\]{}()!]+$",
+                    "description": "相对 repo.source 的覆盖快照锁文件路径（如 site-coverage-lock.json）。"
+                  },
                   "inputs": {
                     "type": "array",
                     "minItems": 1,
                     "uniqueItems": true,
+                    "description": "相对 repo.source 的产品输入路径或通配模式（仅支持 * 与 **），每项至少匹配一个文件。",
                     "items": { "type": "string", "minLength": 1, "pattern": "^[^?\\[\\]{}()!]+$" }
                   }
                 }
@@ -48,28 +120,38 @@
               "versionSources": {
                 "type": "object",
                 "minProperties": 1,
+                "description": "将 @TOKEN@ 占位符绑定至权威 JSON 文件及 JSON Pointer 路径，引用文件自动纳入覆盖输入。",
                 "propertyNames": { "pattern": "^@[A-Z0-9_]+@$" },
                 "additionalProperties": {
                   "type": "object",
                   "additionalProperties": false,
                   "required": ["source", "pointer"],
                   "properties": {
-                    "source": { "type": "string", "minLength": 1, "pattern": "^[^*?\\[\\]{}()!]+$" },
-                    "pointer": { "type": "string", "pattern": "^/" },
-                    "prefix": { "type": "string" },
-                    "suffix": { "type": "string" }
+                    "source": {
+                      "type": "string",
+                      "minLength": 1,
+                      "pattern": "^[^*?\\[\\]{}()!]+$",
+                      "description": "相对 repo.source 的权威 JSON 文件路径。"
+                    },
+                    "pointer": {
+                      "type": "string",
+                      "pattern": "^/",
+                      "description": "以 / 开头的 RFC 6901 JSON Pointer，目标值须为字符串、数字或布尔标量。"
+                    },
+                    "prefix": { "type": "string", "description": "拼接在提取标量值前的可选静态前缀。" },
+                    "suffix": { "type": "string", "description": "拼接在提取标量值后的可选静态后缀。" }
                   }
                 }
               },
               "tokens": {
                 "type": "object",
+                "description": "静态文本占位符键值映射（同名项以 versionSources 的权威值优先）。",
                 "additionalProperties": {
                   "anyOf": [{ "type": "string" }, { "type": "number" }, { "type": "boolean" }]
                 }
               }
             },
             "dependentRequired": {
-              "format": ["template"],
               "template": ["format"]
             }
           }
@@ -78,10 +160,12 @@
     },
     "forbiddenPublicPaths": {
       "type": "array",
+      "description": "追加至写盘前泄漏扫描器的项目禁发路径字面量列表（须与 .release-skill/project.yaml 同步）。",
       "items": { "type": "string", "minLength": 1 }
     },
     "privateLiterals": {
       "type": "array",
+      "description": "追加至写盘前泄漏扫描器的项目私有敏感词列表。",
       "items": { "type": "string", "minLength": 1 }
     }
   }

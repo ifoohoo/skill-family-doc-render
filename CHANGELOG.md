@@ -1,5 +1,15 @@
 # 变更日志
 
+## 0.7.0
+
+### 重大更新与新设计系统
+
+- **现代 Markdown 编译内核（`markdown-v2`）**：基于 `marked@18.0.11` 重构编译链路，解除多级嵌套列表、任务列表、普通引用块、水平分隔线、引用式链接与页面首段起手限制；向后兼容映射存量 `markdown-v1` 与 `editorial` 配置，保留旧 HTML 注入兼容路径不变。
+- **6 大 AI 技能族原生组件**：内置全站偏好记忆的多宿主切换 `::: tabs sync="host"`、AI 提示词卡片 vs 零依赖静态语法着色代码块、序号步骤流 `::: steps`、导览卡片网格 `::: cards`、目录树 `::: file-tree`、四色语义提示框与安全图表内嵌 `::: diagram`（支持安全 SVG 与沙箱化 Archify 交互图）。
+- **现代三栏响应式模板（`modern`）**：毛玻璃吸顶顶栏、版本胶囊、`⌘K / Ctrl+K` 即时全文搜索、单图标浅/深色主题切换（无 JS 自动跟随系统）、`IntersectionObserver` 实时滚动大纲与无障碍抽屉导航，全视口零横向溢出。
+- **确定性 `?v=<sha8>` 内容指纹防旧缓存**：磁盘保留干净固定文件名（`assets/theme.css`、`assets/site.js`、`assets/search-index.json`、`assets/mark.svg`），HTML 引用与 `data-search-index` 自动注入真实字节 SHA-256 前 8 位指纹，改文档不改样式/脚本指纹，改样式/脚本立即穿透浏览器与 CDN 缓存。
+- **弹性 `pages.json`**：支持简洁声明 `site: { title, tagline?, version? }`、`groups` 与 `pages`，不再强制填写 `role` / `kind` / `inPager` 枚举槽位；已有 `pages.json` 继续兼容。
+
 ## 0.6.8
 
 - 随 Docs 插件及站点联合发版。本轮主要调整是外置中文表达方法及文档接入，渲染器没有新增业务特性。

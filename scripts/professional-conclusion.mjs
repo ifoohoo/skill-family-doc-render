@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @feature DOC1 @scenario S-01 S-02
 // 文档族共同证明：把机械 --check-project 结果投影为 professional-conclusion，
 // 并读取本族证明。结构校验与文件读写使用 Foundation 公共入口；本模块只保留
 // DOCS 领域码、实际检查范围和原因转换。
@@ -54,7 +55,7 @@ export function requireProfessionalSchemaId() {
   const registration = professionalSchemaRegistration();
   if (!registration?.$id || !registration.dialect) {
     throw new ProofError(
-      '[skill-family-doc-render] 缺少 Foundation professional-conclusion Schema，需要精确安装 skill-family-contracts@0.22.0',
+      '[skill-family-doc-render] 未找到 Foundation professional-conclusion Schema，请确认已正确安装匹配的 skill-family-contracts 依赖',
       2,
     );
   }

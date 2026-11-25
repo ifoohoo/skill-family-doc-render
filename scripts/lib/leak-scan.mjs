@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @feature DOC1 @scenario S-01 S-02
 // 内容级泄漏扫描：解码后再匹配，防 HTML 实体 / JS 反转义 / URL 百分号编码绕过。
 // 默认扫描绝对路径与私钥 / Token；项目特定的私有字面量通过调用方传入
 // （来自 public-release.json 的 forbiddenPublicPaths / privateLiterals）。
@@ -25,6 +26,10 @@ export const DEFAULT_REGEXES = [
 // 泄漏命中专用错误类型：调用方可据 instanceof 归类退出码，不与配置错误混淆。
 export class LeakScanError extends Error {}
 
+function safeCodePoint(cp, fallback) {
+  return Number.isInteger(cp) && cp >= 0 && cp <= 0x10ffff ? String.fromCodePoint(cp) : fallback;
+}
+
 // HTML 实体解码单趟。允许常见实体省略数字实体末尾分号（浏览器兼容形式）。
 function entityDecode(s) {
   return s
@@ -33,15 +38,15 @@ function entityDecode(s) {
     .replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"')
     .replace(/&sol;/gi, '/')
-    .replace(/&#x([0-9a-fA-F]+);?/gi, (m, h) => String.fromCodePoint(parseInt(h, 16)))
-    .replace(/&#(\d+);?/g, (m, d) => String.fromCodePoint(parseInt(d, 10)));
+    .replace(/&#x([0-9a-fA-F]+);?/gi, (m, h) => safeCodePoint(parseInt(h, 16), m))
+    .replace(/&#(\d+);?/g, (m, d) => safeCodePoint(parseInt(d, 10), m));
 }
 
 // JS 转义序列反转义（\xNN / \uNNNN / \u{N} / 八进制 \NNN）。
 function jsUnescape(s) {
   return s
     .replace(/\\x([0-9a-fA-F]{2})/g, (m, h) => String.fromCharCode(parseInt(h, 16)))
-    .replace(/\\u\{([0-9a-fA-F]+)\}/g, (m, h) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/\\u\{([0-9a-fA-F]+)\}/g, (m, h) => safeCodePoint(parseInt(h, 16), m))
     .replace(/\\u([0-9a-fA-F]{4})/g, (m, h) => String.fromCharCode(parseInt(h, 16)))
     .replace(/\\([0-7]{3})/g, (m, o) => String.fromCharCode(parseInt(o, 8)));
 }

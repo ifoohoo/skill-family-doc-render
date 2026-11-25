@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @feature DOC1 @scenario S-01
 // 对项目内容 SVG 做保守的主动内容检查；模板自带图标不走此入口。
 
 export class SvgSafetyError extends TypeError {
@@ -19,27 +20,27 @@ function decodeCssEscapes(value) {
 }
 
 export function assertSafeSvg(text, path) {
-  if (typeof text !== 'string' || !text.trim()) reject(path, 'file must be nonempty UTF-8 text');
-  if (text.includes('\u0000')) reject(path, 'NUL is not allowed');
+  if (typeof text !== 'string' || !text.trim()) reject(path, 'file must be nonempty UTF-8 text（SVG 文件须为非空 UTF-8 文本）');
+  if (text.includes('\u0000')) reject(path, 'NUL is not allowed（不允许包含空字符）');
   if (!/^\s*(?:<\?xml\s[^?]*\?>\s*)?(?:<!--[\s\S]*?-->\s*)*<svg(?:\s|>)/i.test(text)) {
-    reject(path, 'root element must be svg');
+    reject(path, 'root element must be svg（根元素必须为 <svg>）');
   }
-  if (/<!\s*(?:DOCTYPE|ENTITY)\b/i.test(text)) reject(path, 'DTD and entity declarations are not allowed');
+  if (/<!\s*(?:DOCTYPE|ENTITY)\b/i.test(text)) reject(path, 'DTD and entity declarations are not allowed（禁止包含 DOCTYPE 或 ENTITY 声明）');
   if (/<\/?(?:[A-Za-z_][\w.-]*:)?(?:script|foreignObject)(?:\s|\/?>)/i.test(text)) {
-    reject(path, 'script and foreignObject elements are not allowed');
+    reject(path, 'script and foreignObject elements are not allowed（禁止包含 <script> 或 <foreignObject> 主动内容）');
   }
-  if (/\s(?:[A-Za-z_][\w.-]*:)?on[a-z0-9_.:-]*\s*=/i.test(text)) reject(path, 'event attributes are not allowed');
-  if (/<\?(?!xml\s)[\s\S]*?\?>/i.test(text)) reject(path, 'processing instructions are not allowed');
+  if (/\s(?:[A-Za-z_][\w.-]*:)?on[a-z0-9_.:-]*\s*=/i.test(text)) reject(path, 'event attributes are not allowed（禁止包含 on* 事件属性）');
+  if (/<\?(?!xml\s)[\s\S]*?\?>/i.test(text)) reject(path, 'processing instructions are not allowed（禁止非 XML 处理指令）');
   if (/\b(?:href|xlink:href|src)\s*=\s*(["'])(?!#)[\s\S]*?\1/i.test(text)) {
-    reject(path, 'external resource references are not allowed');
+    reject(path, 'external resource references are not allowed（禁止引用外部资源，仅允许 #本地片段引用）');
   }
   if (/\b(?:href|xlink:href|src)\s*=\s*[^\s"'=<>`]+/i.test(text)) {
-    reject(path, 'resource references must be quoted local fragments');
+    reject(path, 'resource references must be quoted local fragments（资源引用须使用带引号的 #本地片段）');
   }
   const decodedCss = decodeCssEscapes(text);
-  if (/@import\b/i.test(decodedCss)) reject(path, 'CSS imports are not allowed');
+  if (/@import\b/i.test(decodedCss)) reject(path, 'CSS imports are not allowed（禁止在 SVG 样式中使用 @import）');
   for (const match of decodedCss.matchAll(/url\(\s*(["']?)(.*?)\1\s*\)/gi)) {
-    if (!/^#[A-Za-z0-9][A-Za-z0-9_-]*$/.test(match[2])) reject(path, 'CSS URLs must be local fragments');
+    if (!/^#[A-Za-z0-9][A-Za-z0-9_-]*$/.test(match[2])) reject(path, 'CSS URLs must be local fragments（SVG 样式中的 url() 仅允许引用 #本地片段）');
   }
   return text;
 }

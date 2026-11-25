@@ -1,9 +1,10 @@
 {
   "name": "skill-family-doc-render",
-  "version": "0.6.8",
+  "version": "0.7.0",
   "description": "Config-driven GitHub Pages knowledge-site renderer for skill-family projects (multi-repo capable).",
   "author": "广州市风荷科技有限公司",
   "license": "Apache-2.0",
+  "homepage": "https://ifoohoo.github.io/skill-family-doc-render-site/",
   "type": "module",
   "engines": {
     "node": ">=22.22.2 <23"
@@ -27,7 +28,7 @@
   },
   "dependencies": {
     "marked": "18.0.11",
-    "skill-family-contracts": "0.26.0",
-    "skill-family-harness-node": "0.26.0"
+    "skill-family-contracts": "0.39.0",
+    "skill-family-harness-node": "0.39.0"
   }
 }

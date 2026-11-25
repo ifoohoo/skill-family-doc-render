@@ -2,18 +2,24 @@
   "$id": "https://github.com/ifoohoo/skill-family-doc-render/schemas/site-baseline.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "site-baseline.json",
-  "description": "站点树基线：closure 集合级 sha256 + 排序后的相对路径列表（排除基线自身）+ 逐文件 sha256 摘要（--check 用于内存渲染产物逐文件比对）。",
+  "description": "静态渲染产物树基线：记录排除基线文件自身后的集合级闭包 SHA-256、有序相对路径清单与逐文件字节 SHA-256，供 --check 只读检测源改未重渲或产物被手改。",
   "type": "object",
   "additionalProperties": false,
   "required": ["sha256", "files", "digests"],
   "properties": {
-    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "基于 Foundation computeResourceClosure 计算的渲染目录整体 SHA-256 摘要。"
+    },
     "files": {
       "type": "array",
+      "description": "按字典序排列的渲染产物相对路径列表（不含 site-baseline.json 自身）。",
       "items": { "type": "string", "minLength": 1 }
     },
     "digests": {
       "type": "object",
+      "description": "每个渲染输出文件的相对路径到其字节级 SHA-256 摘要的映射。",
       "additionalProperties": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
     }
   }

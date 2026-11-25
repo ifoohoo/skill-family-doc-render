@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: Apache-2.0
+// @feature DOC1 @scenario S-01 S-02
+// @feature DOC2 @scenario S-04 S-05
 // CLI 入口：全部 argv 原样委托给 main()。闭集解析、--help/-h、
 // --check-project / --read-proof 互斥路由均由 main() 裁决。
 import { main, RenderError } from '../scripts/render-public-site.mjs';

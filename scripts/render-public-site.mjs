@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
+// @feature DOC1 @scenario S-01 S-02 S-03
+// @feature DOC2 @scenario S-04 S-05
 // 通用 GitHub Pages 知识站渲染器（配置驱动，多仓库）。
 // 遍历 public-release.json 中所有带 site 字段的 repo，渲染各自站点源到目标目录。
 // format 缺省时兼容完整 HTML 注入；显式 markdown-v1 + editorial 时，将受限 Markdown
@@ -43,10 +45,19 @@ import {
 } from 'skill-family-harness-node';
 import { validateDocument } from 'skill-family-contracts';
 import { scanLeak, LeakScanError } from './lib/leak-scan.mjs';
-import { compileMarkdownV1, replaceMarkdownTokens } from './lib/markdown-v1.mjs';
+import { compileMarkdown, replaceMarkdownTokens } from './lib/markdown-compiler.mjs';
 import { assertSafeSvg } from './lib/svg-safety.mjs';
 import { checkRenderedLinks } from './lib/rendered-links.mjs';
-import { renderEditorialSite } from '../templates/editorial/index.mjs';
+import {
+  checkLayoutOverflow,
+  formatLayoutOverflowReport,
+  parseViewportList,
+} from './lib/layout-overflow.mjs';
+import {
+  checkStaleRestrictions,
+  formatStaleRestrictionsReport,
+} from './lib/stale-restrictions.mjs';
+import { renderModernSite } from '../templates/modern/index.mjs';
 import {
   CHECK_STAGE_IDS,
   ProofError,
@@ -466,32 +477,118 @@ function scanOrThrow(relPath, text, leakLiterals) {
   }
 }
 
+function decodeBasicEntities(value) {
+  return value
+    .replaceAll('&lt;', '<')
+    .replaceAll('&gt;', '>')
+    .replaceAll('&quot;', '"')
+    .replaceAll('&#39;', "'")
+    .replaceAll('&amp;', '&');
+}
+
+function assertRenderedContentContract(repoName, outputs) {
+  const violations = [];
+  const angleHintRe = /(?:把|将|请把|请将)?[^。！？\n]{0,18}尖括号(?:里|内|中)[^。！？\n]{0,24}(?:换|替换|改|填)|(?:替换|修改|填写)[^。！？\n]{0,14}尖括号/;
+  for (const out of outputs) {
+    if (!out.path.endsWith('.html') || out.path.startsWith('assets/')) continue;
+    const masked = out.text
+      .replace(/<!--[\s\S]*?-->/g, (m) => m.replace(/[^\n]/g, ' '))
+      .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, (m) => m.replace(/[^\n]/g, ' '))
+      .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, (m) => m.replace(/[^\n]/g, ' '));
+    const lineOf = (offset) => {
+      let line = 1;
+      for (let i = 0; i < offset && i < masked.length; i += 1) {
+        if (masked[i] === '\n') line += 1;
+      }
+      return line;
+    };
+
+    const seenTitleOffsets = new Set();
+    const inspectTitleCandidate = (offset, tagLabel, innerHtml) => {
+      if (seenTitleOffsets.has(offset)) return;
+      seenTitleOffsets.add(offset);
+      const withoutCode = innerHtml
+        .replace(/<pre\b[^>]*>[\s\S]*?<\/pre>/gi, ' ')
+        .replace(/<code\b[^>]*>[\s\S]*?<\/code>/gi, ' ')
+        .replace(/<button\b[^>]*>[\s\S]*?<\/button>/gi, ' ')
+        .replace(/<[^>]+>/g, '');
+      const hit = /`[^`\r\n]+`/.exec(decodeBasicEntities(withoutCode));
+      if (hit) {
+        violations.push(
+          `${out.path}:L${lineOf(offset)} <${tagLabel}> 文本残留未解析反引号 ${hit[0]}（请改用支持行内 Markdown 的组件语法，或移除纯文本属性中的反引号）`,
+        );
+      }
+    };
+
+    for (const m of masked.matchAll(/<(h[1-4]|figcaption)\b[^>]*>([\s\S]*?)<\/\1>/gi)) {
+      inspectTitleCandidate(m.index, m[1].toLowerCase(), m[2]);
+    }
+    for (const m of masked.matchAll(/<(strong|span|div|p)\b[^>]*\bclass\s*=\s*["'][^"']*\b(?:callout-title|card-title|doc-card-title|diagram-title)\b[^"']*["'][^>]*>([\s\S]*?)<\/\1>/gi)) {
+      inspectTitleCandidate(m.index, `${m[1].toLowerCase()}.title`, m[2]);
+    }
+
+    for (const pm of masked.matchAll(/<(p|li)\b[^>]*>([\s\S]*?)<\/\1>/gi)) {
+      const plain = decodeBasicEntities(pm[2].replace(/<[^>]+>/g, '')).trim();
+      if (!angleHintRe.test(plain)) continue;
+      const afterPara = masked.slice(pm.index + pm[0].length);
+      const nextHeadingIdx = afterPara.search(/<h[1-3]\b/i);
+      const sectionWindow = nextHeadingIdx >= 0 ? afterPara.slice(0, nextHeadingIdx) : afterPara;
+      const promptMatch = /<div\b[^>]*\bclass\s*=\s*["'][^"']*\bprompt-card\b[^"']*["'][^>]*>[\s\S]*?<pre\b[^>]*><code\b[^>]*>([\s\S]*?)<\/code><\/pre>/i.exec(sectionWindow);
+      const promptPlain = promptMatch ? decodeBasicEntities(promptMatch[1].replace(/<[^>]+>/g, '')) : '';
+      if (!promptMatch || !/<[^<>\s][^<>\r\n]{0,80}>/.test(promptPlain)) {
+        violations.push(
+          `${out.path}:L${lineOf(pm.index)} 导语提示替换尖括号内容，但紧邻的提示词卡片内不存在任何 <...> 占位符（请删除悬空提示或补齐占位符）`,
+        );
+      }
+    }
+  }
+  if (violations.length) {
+    throw new RenderError(
+      `[render-public-site] ${repoName}: 正文机械合同检查未通过:\n  - ${violations.join('\n  - ')}`,
+      1,
+    );
+  }
+}
+
 function decodeUtf8(bytes, label) {
   try {
     return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
   } catch (cause) {
-    throw new TypeError(`${label} must be valid UTF-8`, { cause });
+    throw new TypeError(`${label} must be valid UTF-8（文件须为合法的 UTF-8 编码文本）`, { cause });
   }
 }
 
-function editorialMetadata(pagesDoc, tokens) {
+function siteMetadata(pagesDoc, tokens) {
   const text = (value, label) => replaceMarkdownTokens(value, tokens, label);
   return {
     site: {
       title: text(pagesDoc.site.title, 'site.title'),
-      description: text(pagesDoc.site.description, 'site.description'),
-      productKind: pagesDoc.site.productKind,
+      ...(pagesDoc.site.tagline === undefined ? {} : {
+        tagline: text(pagesDoc.site.tagline, 'site.tagline'),
+      }),
+      ...(pagesDoc.site.description === undefined ? {} : {
+        description: text(pagesDoc.site.description, 'site.description'),
+      }),
+      ...(pagesDoc.site.version === undefined ? {} : {
+        version: text(pagesDoc.site.version, 'site.version'),
+      }),
+      ...(pagesDoc.site.productKind === undefined ? {} : {
+        productKind: pagesDoc.site.productKind,
+      }),
     },
-    groups: pagesDoc.groups.map((group) => ({
-      ...group,
-      title: text(group.title, `group ${group.id} title`),
-    })),
+    ...(pagesDoc.groups === undefined ? {} : {
+      groups: pagesDoc.groups.map((group) => ({
+        ...group,
+        title: text(group.title, `group ${group.id} title`),
+      })),
+    }),
   };
 }
 
 async function markdownOutputs(root, repo, dirRel, pagesDoc, tokens) {
-  if (repo.site.template !== 'editorial') {
-    throw new TypeError(`unsupported template: ${repo.site.template}`);
+  const templateName = repo.site.template || 'modern';
+  if (!['modern', 'editorial'].includes(templateName)) {
+    throw new TypeError(`unsupported template: ${templateName}（当前仅支持内置模板 modern 与兼容别名 editorial）`);
   }
   const containedDir = await resolveContained(root, dirRel);
   const expected = new Set(pagesDoc.pages.map((page) => `${page.id}.md`));
@@ -502,40 +599,61 @@ async function markdownOutputs(root, repo, dirRel, pagesDoc, tokens) {
     ...[...expected].filter((name) => !actual.has(name)).map((name) => `missing ${name}`),
     ...[...actual].filter((name) => !expected.has(name)).map((name) => `undeclared ${name}`),
   ].sort();
-  if (mismatches.length) throw new TypeError(`Markdown source set does not match pages.json: ${mismatches.join(', ')}`);
+  if (mismatches.length) {
+    throw new TypeError(
+      `Markdown source set does not match pages.json: ${mismatches.join(', ')}（站点目录下的 .md 文件须与 pages.json 页面清单一一对应）`,
+    );
+  }
 
-  const images = new Set();
+  const contentAssetPaths = new Set();
   const pages = [];
   for (const page of pagesDoc.pages) {
     const rel = join(dirRel, `${page.id}.md`);
     const source = decodeUtf8(await readFileContained(root, rel), `${page.id}.md`);
-    const compiled = compileMarkdownV1(source, { pageId: page.id, tokens });
-    compiled.images.forEach((path) => images.add(path));
+    const compiled = compileMarkdown(source, { pageId: page.id, tokens });
+    compiled.assets.forEach((path) => contentAssetPaths.add(path));
     pages.push({
       ...page,
       title: replaceMarkdownTokens(page.title, tokens, `page ${page.id} title`),
       ...(page.navTitle === undefined ? {} : {
         navTitle: replaceMarkdownTokens(page.navTitle, tokens, `page ${page.id} navTitle`),
       }),
+      ...(page.summary === undefined ? {} : {
+        summary: replaceMarkdownTokens(page.summary, tokens, `page ${page.id} summary`),
+      }),
       blocks: compiled.blocks,
     });
   }
 
-  const rendered = renderEditorialSite({ ...editorialMetadata(pagesDoc, tokens), pages });
+  const assetOutputs = [];
+  const assetHashes = {};
+  for (const path of [...contentAssetPaths].sort()) {
+    const bytes = await readFileContained(root, join(dirRel, path));
+    let text = '';
+    if (path.endsWith('.svg')) {
+      text = decodeUtf8(bytes, path);
+      assertSafeSvg(text, path);
+    } else if (path.endsWith('.html')) {
+      text = decodeUtf8(bytes, path);
+    }
+    assetHashes[path] = digestBytes(bytes).slice(0, 8);
+    assetOutputs.push({ path, text, bytes });
+  }
+
+  const rendered = renderModernSite({
+    ...siteMetadata(pagesDoc, tokens),
+    pages,
+    assetHashes,
+  });
   const outputs = rendered.pages.map((page) => {
     const text = `<!-- generated by skill-family-doc-render -->\n${page.text}`;
     return { path: page.path, text, bytes: Buffer.from(text, 'utf8') };
   });
   for (const asset of rendered.assets) {
-    const bytes = await readFile(asset.source);
+    const bytes = asset.bytes ?? await readFile(asset.source);
     outputs.push({ path: asset.path, text: decodeUtf8(bytes, asset.path), bytes });
   }
-  for (const path of [...images].sort()) {
-    const bytes = await readFileContained(root, join(dirRel, path));
-    const text = decodeUtf8(bytes, path);
-    assertSafeSvg(text, path);
-    outputs.push({ path, text, bytes });
-  }
+  outputs.push(...assetOutputs);
   return outputs;
 }
 
@@ -568,7 +686,7 @@ function assertGitTracked(root, repo, targetRel, files) {
 }
 
 // --- 渲染单仓 ---
-async function renderRepo(root, repo, release, leakLiterals, { check, assertGit, inputOnly = false }) {
+async function renderRepo(root, repo, release, leakLiterals, { check, assertGit, inputOnly = false, checkContentContract = false }) {
   const site = repo.site;
   const dirRel = join(repo.source, site.dir);
   const pagesRel = join(dirRel, site.pages);
@@ -592,7 +710,9 @@ async function renderRepo(root, repo, release, leakLiterals, { check, assertGit,
   }
   const pagesDoc = await readJsonContained(root, pagesRel, 'pages.json', repo.name);
   assertValid(pagesDoc, pagesSchema, `${repo.name} pages.json`);
-  const ordered = [...pagesDoc.pages].sort((a, b) => a.order - b.order);
+  const ordered = pagesDoc.pages.every((p) => Number.isSafeInteger(p.order))
+    ? [...pagesDoc.pages].sort((a, b) => a.order - b.order)
+    : [...pagesDoc.pages];
   const pagerPages = ordered.filter((p) => p.inPager !== false);
 
   function navHtml(currentId) {
@@ -632,15 +752,18 @@ async function renderRepo(root, repo, release, leakLiterals, { check, assertGit,
   // --- 内存渲染全部产物（页面 + assets + .nojekyll）；任何失败发生在写盘之前 ---
   // outputs: { path: target 内相对路径, text: 扫描用文本, bytes: 落盘字节 }
   let outputs;
-  if (site.format === 'markdown-v1') {
+  if (site.format === 'markdown-v1' || site.format === 'markdown-v2') {
+    if (!pagesDoc.site?.title) {
+      throw configError(repo.name, 'Markdown 站点 pages.json 必须包含 site.title');
+    }
     try {
       outputs = await markdownOutputs(root, repo, dirRel, pagesDoc, tokens);
     } catch (cause) {
-      throw configError(repo.name, `markdown-v1 输入错误: ${cause.message}`, cause);
+      throw configError(repo.name, `${site.format} 输入错误: ${cause.message}`, cause);
     }
   } else {
-    if (pagesDoc.groups !== undefined) {
-      throw configError(repo.name, 'markdown-v1 页面清单必须显式配置 site.format 与 site.template');
+    if (pagesDoc.groups !== undefined || pagesDoc.site?.title !== undefined) {
+      throw configError(repo.name, 'Markdown 页面清单必须显式配置 site.format（如 markdown-v2）');
     }
     outputs = [];
     for (const p of ordered) {
@@ -661,13 +784,21 @@ async function renderRepo(root, repo, release, leakLiterals, { check, assertGit,
       const out = '<!-- generated by skill-family-doc-render -->\n' + html;
       outputs.push({ path: p.id + '.html', text: out, bytes: Buffer.from(out, 'utf8') });
     }
-    // 旧 HTML 兼容模式继续复制项目自有资源。
+    // 旧 HTML 兼容模式继续复制项目自有资源，并对 SVG 强制执行主动内容安全校验。
     const assetSrc = resolve(root, dirRel, 'assets');
     if (existsSync(assetSrc)) {
       for (const f of (await readdir(assetSrc)).sort()) {
         if (['.html', '.css', '.js', '.svg'].includes(extname(f))) {
           const bytes = await readFileContained(root, join(dirRel, 'assets', f));
-          outputs.push({ path: 'assets/' + f, text: bytes.toString('utf8'), bytes });
+          const text = extname(f) === '.svg' ? decodeUtf8(bytes, `assets/${f}`) : bytes.toString('utf8');
+          if (extname(f) === '.svg') {
+            try {
+              assertSafeSvg(text, `assets/${f}`);
+            } catch (cause) {
+              throw configError(repo.name, `旧模式 SVG 安全校验失败: ${cause.message}`, cause);
+            }
+          }
+          outputs.push({ path: 'assets/' + f, text, bytes });
         }
       }
     }
@@ -677,6 +808,7 @@ async function renderRepo(root, repo, release, leakLiterals, { check, assertGit,
 
   // 写盘前统一泄漏扫描：页面与 assets 同一规则（对解码后内容）
   for (const o of outputs) scanOrThrow(`${repo.name}/${o.path}`, o.text, leakLiterals);
+  if (checkContentContract) assertRenderedContentContract(repo.name, outputs);
   if (inputOnly) return;
 
   // 逐文件 sha256（harness digestBytes），--check 与基线逐文件比对用
@@ -785,8 +917,82 @@ async function renderRepo(root, repo, release, leakLiterals, { check, assertGit,
 
 }
 
+const PUBLIC_SITE_REPO_RE = /^[A-Za-z0-9_.-]+\/[a-z0-9][a-z0-9-]*-site$/;
+const LEGACY_SITE_REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+
+function isValidHttpsPagesUrl(value) {
+  if (typeof value !== 'string' || !value.startsWith('https://') || /[\s\\<>"'\u0000-\u001f\u007f]/u.test(value)) {
+    return false;
+  }
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === 'https:' && Boolean(parsed.hostname) && !parsed.username && !parsed.password;
+  } catch {
+    return false;
+  }
+}
+
+async function assertPublicSitePublishingContract(root, repo) {
+  const site = repo.site || {};
+  const violations = [];
+
+  if (site.publicSiteRepo !== undefined) {
+    if (site.legacySiteRepoAllowlist === true) {
+      if (!LEGACY_SITE_REPO_RE.test(site.publicSiteRepo)) {
+        violations.push(
+          `site.publicSiteRepo "${site.publicSiteRepo}" 不是合法的 <owner>/<repo> GitHub 仓库坐标`,
+        );
+      }
+    } else if (!PUBLIC_SITE_REPO_RE.test(site.publicSiteRepo)) {
+      violations.push(
+        `site.publicSiteRepo "${site.publicSiteRepo}" 违反命名规范：必须匹配 /^[A-Za-z0-9_.-]+\\/[a-z0-9][a-z0-9-]*-site$/（独立公开文档仓统一以 -site 结尾，禁止使用 -doc、-docs、-pages、-wiki 等后缀；若属历史存量仓库，须显式声明 "legacySiteRepoAllowlist": true）`,
+      );
+    }
+  }
+
+  if (site.pagesUrl !== undefined) {
+    if (!isValidHttpsPagesUrl(site.pagesUrl)) {
+      violations.push(
+        `site.pagesUrl "${site.pagesUrl}" 非法：必须为有效的 https:// GitHub Pages 访问地址（如 "https://<owner>.github.io/<id>-site/"）`,
+      );
+    } else {
+      const sourceRoot = await repoSourceRoot(root, repo);
+      const readmePaths = Array.isArray(site.publicReadmePaths) && site.publicReadmePaths.length
+        ? site.publicReadmePaths
+        : ['README.md'];
+      for (const [index, readmeRel] of readmePaths.entries()) {
+        const fieldLabel = site.publicReadmePaths ? `site.publicReadmePaths[${index}]` : 'README.md';
+        if (readmeRel.split('/').includes('..')) {
+          throw configError(repo.name, `${fieldLabel} 不能包含 .. 路径段: ${readmeRel}`);
+        }
+        const readmeAbs = await containedOrConfig(sourceRoot, readmeRel, repo.name, fieldLabel);
+        if (!existsSync(readmeAbs) || !(await stat(readmeAbs)).isFile()) {
+          violations.push(
+            `公开说明文档 ${readmeRel} 不存在：声明 site.pagesUrl 后，请在公开仓库 README 顶部补齐显式 GitHub Pages 在线文档入口 ${site.pagesUrl}`,
+          );
+          continue;
+        }
+        const readmeText = await readFileContained(sourceRoot, readmeRel, { encoding: 'utf8' });
+        const visibleReadme = readmeText.replace(/<!--[\s\S]*?-->/g, '');
+        if (!visibleReadme.includes(site.pagesUrl)) {
+          violations.push(
+            `公开说明文档 ${readmeRel} 未包含完整的 GitHub Pages 链接文本 ${site.pagesUrl}：请在公开仓库 README 顶部补齐显式 GitHub Pages 在线文档入口`,
+          );
+        }
+      }
+    }
+  }
+
+  if (violations.length) {
+    throw new RenderError(
+      `[render-public-site] ${repo.name}: 独立公开文档站命名与 Pages 入口检查未通过:\n  - ${violations.join('\n  - ')}`,
+      1,
+    );
+  }
+}
+
 function projectRecoveryPrompt(repoName) {
-  return `请使用 skill-family-docs-render-site 处理仓库 ${repoName} 的知识站检查失败。先读取 public-release.json 和 skill-family-doc-render --check-project --repo ${repoName} 的实际输出，再判断需要内容刷新、纯渲染还是修正配置。不提前刷新覆盖快照，不手改生成产物。`;
+  return `请使用 skill-family-docs-build-site 处理仓库 ${repoName} 的知识站检查失败。先读取 public-release.json 和 skill-family-doc-render --check-project --repo ${repoName} 的实际输出，再判断需要内容刷新、纯渲染还是修正配置。不提前刷新覆盖快照，不手改生成产物。`;
 }
 
 function projectCheckError(repoName, cause, fallbackExitCode = 1) {
@@ -811,7 +1017,13 @@ async function checkProject(root, repo, release, leakLiterals) {
     {
       id: CHECK_STAGE_IDS[0],
       run: async () => {
-        await renderRepo(root, repo, release, leakLiterals, { check: false, assertGit: false, inputOnly: true });
+        await renderRepo(root, repo, release, leakLiterals, {
+          check: false,
+          assertGit: false,
+          inputOnly: true,
+          checkContentContract: true,
+        });
+        await assertPublicSitePublishingContract(root, repo);
         console.log(`[render-public-site --check-project] ${repo.name}: 输入、公开安全与正文机械合同通过`);
       },
     },
@@ -953,18 +1165,18 @@ function projectModeError(flags, message) {
   return error;
 }
 
-// === 主流程 ===
-// 闭集参数解析：允许参数只有 --check / --assert-git / --status /
-// --refresh-coverage / --check-project / --conclusion-output <absolute-path> /
-// --read-proof / --proof-root <root> / --proof <relative> / --repo <name> /
-// --help / -h。
-// 未知选项、游离位置参数、重复取值参数、--repo 缺值或值本身是另一个选项，
-// 均以 RenderError（exit 2）失败，错误信息指出具体参数。不引入 CLI 框架。
-// --help / -h 由 main() 统一呈现：闭集解析先于配置读取与写盘，打印 USAGE_TEXT 后退出 0。
+  // 闭集解析：允许参数包括 --root <dir> / --check / --assert-git / --status /
+  // --refresh-coverage / --check-project / --conclusion-output <absolute-path> /
+  // --read-proof / --proof-root <root> / --proof <relative> /
+  // --check-layout / --viewports <px,px,...> / --check-stale-limits /
+  // --repo <name> / --help / -h。
+  // 未知选项、游离位置参数、重复取值参数、--repo 缺值或值本身是另一个选项，
+  // 均以 RenderError（exit 2）失败，错误信息指出具体参数。不引入 CLI 框架。
+  // --help / -h 由 main() 统一呈现：闭集解析先于配置读取与写盘，打印 USAGE_TEXT 后退出 0。
 const USAGE_TEXT = `skill-family-doc-render — config-driven GitHub Pages knowledge-site renderer
 
 Usage:
-  skill-family-doc-render                render every repo with a site field (writes)
+  skill-family-doc-render [--root <dir>] render every repo with a site field (writes)
   skill-family-doc-render --check        read-only drift check against the on-disk site-baseline.json
   skill-family-doc-render --repo <name>  render / check a single repo by name
   skill-family-doc-render --assert-git   assert rendered files are tracked in the Git index, then render
@@ -974,6 +1186,10 @@ Usage:
                                         read-only coverage status and Git changes
   skill-family-doc-render --refresh-coverage --repo <name>
                                         refresh only site-coverage-lock.json
+  skill-family-doc-render --check-layout [--repo <name>] [--viewports 320,390,768,1280]
+                                        read-only multi-viewport HTML layout overflow inspection
+  skill-family-doc-render [--root <dir>] --check-stale-limits [--repo <name>]
+                                        read-only stale restriction check across SKILL.md and docs
   skill-family-doc-render --check-project --repo <name>
                                         read-only input, coverage, render and link checks
   skill-family-doc-render --check-project --repo <name> --conclusion-output <absolute-path>
@@ -981,7 +1197,43 @@ Usage:
   skill-family-doc-render --read-proof --proof-root <root> --proof <relative>
                                         read one docs-family professional conclusion; do not rescan
 
-Reads public-release.json from the current working directory except --read-proof.`;
+Reads public-release.json from --root <dir> (defaults to current working directory) except --read-proof.
+退出码约定：0 通过 · 1 检出漂移/覆盖落后/泄漏/死链/版面溢出/过时限制 · 2 配置、参数或语法输入错误。`;
+
+async function runLayoutCheck(root, repo, parsedViewports) {
+  const sourceRoot = await repoSourceRoot(root, repo);
+  const targetDir = await containedOrConfig(sourceRoot, repo.site.target, repo.name, 'site.target');
+  if (!existsSync(targetDir)) {
+    throw new RenderError(
+      `[render-public-site --check-layout] ${repo.name}: 目标 ${repo.site.target} 不存在，请先运行站点渲染`,
+      1,
+    );
+  }
+  const pagesDoc = await readJsonContained(sourceRoot, join(repo.site.dir, repo.site.pages), 'pages.json', repo.name);
+  assertValid(pagesDoc, pagesSchema, `${repo.name} pages.json`);
+  const result = await checkLayoutOverflow({
+    targetRoot: targetDir,
+    pageIds: pagesDoc.pages.map((page) => page.id),
+    viewports: parsedViewports,
+  });
+  const report = formatLayoutOverflowReport(result, repo.name);
+  if (result.ok) {
+    console.log(report);
+    return;
+  }
+  throw new RenderError(report, 1);
+}
+
+async function runStaleLimitsCheck(root, repo) {
+  const sourceRoot = await repoSourceRoot(root, repo);
+  const result = await checkStaleRestrictions({ workspaceRoot: sourceRoot });
+  const report = formatStaleRestrictionsReport(result, repo.name);
+  if (result.ok) {
+    console.log(report);
+    return;
+  }
+  throw new RenderError(report, 1);
+}
 
 function parseArgs(argv) {
   const flags = {
@@ -991,10 +1243,15 @@ function parseArgs(argv) {
     refreshCoverage: false,
     checkProject: false,
     readProof: false,
+    checkLayout: false,
+    checkStaleLimits: false,
+    rootArg: null,
     repoArg: null,
     conclusionOutput: null,
     proofRoot: null,
     proof: null,
+    viewports: null,
+    parsedViewports: undefined,
     help: false,
   };
   let i = 0;
@@ -1012,8 +1269,14 @@ function parseArgs(argv) {
       flags.checkProject = true;
     } else if (arg === '--read-proof') {
       flags.readProof = true;
+    } else if (arg === '--check-layout') {
+      flags.checkLayout = true;
+    } else if (arg === '--check-stale-limits') {
+      flags.checkStaleLimits = true;
     } else if (arg === '--help' || arg === '-h') {
       flags.help = true;
+    } else if (arg === '--root') {
+      i = takeValue(argv, i, '--root', flags, 'rootArg');
     } else if (arg === '--repo') {
       if (flags.repoArg !== null) {
         throw new RenderError('[render-public-site] 参数错误: --repo 重复出现，取值语义不明确', 2);
@@ -1030,12 +1293,30 @@ function parseArgs(argv) {
       i = takeValue(argv, i, '--proof-root', flags, 'proofRoot');
     } else if (arg === '--proof') {
       i = takeValue(argv, i, '--proof', flags, 'proof');
+    } else if (arg === '--viewports') {
+      i = takeValue(argv, i, '--viewports', flags, 'viewports');
     } else if (arg.startsWith('-')) {
       throw new RenderError(`[render-public-site] 参数错误: 未知选项 ${arg}`, 2);
     } else {
       throw new RenderError(`[render-public-site] 参数错误: 未知位置参数 ${arg}`, 2);
     }
     i += 1;
+  }
+  if (flags.viewports !== null && !flags.checkLayout) {
+    throw new RenderError('[render-public-site] 参数错误: --viewports 只能与 --check-layout 一起使用', 2);
+  }
+  if (flags.viewports !== null) {
+    try {
+      flags.parsedViewports = parseViewportList(flags.viewports);
+    } catch (cause) {
+      throw new RenderError(`[render-public-site] 参数错误: ${cause.message}`, 2, cause);
+    }
+  }
+  if (flags.checkLayout && (flags.check || flags.assertGit || flags.status || flags.refreshCoverage || flags.checkProject || flags.readProof || flags.checkStaleLimits || flags.help || flags.conclusionOutput)) {
+    throw new RenderError('[render-public-site] 参数错误: --check-layout 不能与其他检查、覆盖、证明或帮助选项组合', 2);
+  }
+  if (flags.checkStaleLimits && (flags.check || flags.assertGit || flags.status || flags.refreshCoverage || flags.checkProject || flags.readProof || flags.checkLayout || flags.help || flags.conclusionOutput)) {
+    throw new RenderError('[render-public-site] 参数错误: --check-stale-limits 不能与其他检查、覆盖、证明或帮助选项组合', 2);
   }
   if (flags.status && flags.refreshCoverage) {
     throw new RenderError('[render-public-site] 参数错误: --status 与 --refresh-coverage 不能同时使用', 2);
@@ -1049,7 +1330,7 @@ function parseArgs(argv) {
   if (flags.readProof && flags.checkProject) {
     throw new RenderError('[render-public-site] 参数错误: --check-project 与 --read-proof 互斥', 2);
   }
-  if (flags.readProof && (flags.check || flags.assertGit || flags.status || flags.refreshCoverage || flags.help || flags.conclusionOutput || flags.repoArg)) {
+  if (flags.readProof && (flags.check || flags.assertGit || flags.status || flags.refreshCoverage || flags.help || flags.conclusionOutput || flags.repoArg || flags.rootArg || flags.checkLayout || flags.checkStaleLimits)) {
     throw new RenderError('[render-public-site] 参数错误: --read-proof 不能与检查、覆盖、Git、帮助或 --conclusion-output 组合', 2);
   }
   if (flags.readProof && (flags.proofRoot === null || flags.proof === null)) {
@@ -1064,7 +1345,7 @@ function parseArgs(argv) {
   if (flags.conclusionOutput && !isAbsolute(flags.conclusionOutput)) {
     throw projectModeError(flags, '参数错误: --conclusion-output 必须是绝对路径');
   }
-  if (flags.checkProject && (flags.check || flags.assertGit || flags.status || flags.refreshCoverage || flags.help)) {
+  if (flags.checkProject && (flags.check || flags.assertGit || flags.status || flags.refreshCoverage || flags.help || flags.checkLayout || flags.checkStaleLimits)) {
     throw projectModeError(flags, '参数错误: --check-project 不能与其他检查、覆盖、Git 或帮助模式组合');
   }
   if (flags.checkProject && flags.repoArg === null) {
@@ -1087,10 +1368,14 @@ export async function main(argv = process.argv.slice(2), { cwd = process.cwd() }
     refreshCoverage,
     checkProject: projectCheck,
     readProof,
+    checkLayout,
+    checkStaleLimits,
+    rootArg,
     repoArg,
     conclusionOutput,
     proofRoot,
     proof,
+    parsedViewports,
     help,
   } = parsed;
   if (help) {
@@ -1098,7 +1383,7 @@ export async function main(argv = process.argv.slice(2), { cwd = process.cwd() }
     return 0;
   }
 
-  const root = resolve(cwd);
+  const root = rootArg !== null ? resolve(cwd, rootArg) : resolve(cwd);
 
   if (readProof) {
     const result = await readProfessionalProof({ proofRoot, proofPath: proof });
@@ -1202,6 +1487,8 @@ export async function main(argv = process.argv.slice(2), { cwd = process.cwd() }
     try {
       if (status) await reportCoverageStatus(root, repo);
       else if (refreshCoverage) await refreshCoverageLock(root, repo);
+      else if (checkLayout) await runLayoutCheck(root, repo, parsedViewports);
+      else if (checkStaleLimits) await runStaleLimitsCheck(root, repo);
       else if (projectCheck) {
         let scanError = null;
         try {

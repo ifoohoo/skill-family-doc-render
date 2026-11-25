@@ -2,27 +2,41 @@
   "$id": "https://github.com/ifoohoo/skill-family-doc-render/schemas/site-coverage-lock.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "site-coverage-lock.json",
-  "description": "知识站已审阅产品输入的最小字节快照；不保存版本、发布状态或人工结论。",
+  "description": "知识站已审阅产品输入的最小字节快照：仅记录输入闭包哈希、各输入文件哈希及可选的 artifact-graph 版本锁哈希，不存储人工审批结论或发布状态。",
   "type": "object",
   "additionalProperties": false,
   "required": ["sha256", "inputs"],
   "properties": {
-    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "全部覆盖输入文件集合的确定性资源闭包 SHA-256 摘要。"
+    },
     "inputs": {
       "type": "array",
+      "description": "按相对路径字典序排列的已审阅产品输入文件及其 SHA-256 摘要列表。",
       "items": {
         "type": "object",
         "additionalProperties": false,
         "required": ["path", "sha256"],
         "properties": {
-          "path": { "type": "string", "minLength": 1 },
-          "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "description": "相对 repo.source 的受控输入文件路径。"
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "description": "该输入文件上次完成文档影响审阅时的字节 SHA-256 摘要。"
+          }
         }
       }
     },
     "artifactGraphVersionLockSha256": {
       "type": "string",
-      "pattern": "^[0-9a-f]{64}$"
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "当仓库存在 artifact-graph.config.yaml 时，同步记录的 artifacts/traceability-version-lock.json 文件 SHA-256 摘要。"
     }
   }
 }
